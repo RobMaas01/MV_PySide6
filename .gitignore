@@ -7,14 +7,13 @@ __pycache__/
 *.pyo
 *.pyd
 
-# SQLite database files — mv_data.db wordt WEL meegeleverd (publish + git)
-# Andere db-bestanden uitsluiten
+# SQLite database files — datasource/mv_data.db wordt WEL meegeleverd
 *.sqlite
 *.sqlite3
 
-# Excel data files (runtime data, niet in git)
-data/*.xlsx
-data/*.xls
+# Excel bronbestanden in datasource/ — niet in git (runtime data)
+datasource/*.xlsx
+datasource/*.xls
 
 # Settings/user data
 settings/

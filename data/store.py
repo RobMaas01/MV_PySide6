@@ -44,7 +44,7 @@ def _data_folder() -> Path:
             return Path(folder)
     if getattr(sys, 'frozen', False):
         return Path(sys.executable).parent / 'datasource'
-    return _base_dir() / 'data'
+    return _base_dir() / 'datasource'
 
 
 # ---------------------------------------------------------------------------
