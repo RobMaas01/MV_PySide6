@@ -153,14 +153,56 @@ _DLG_ROW_H = 26
 _DLG_HDR_H = 36
 
 
+def _style_excel_sheet(ws, df: pd.DataFrame) -> None:
+    """Pas uniforme opmaak toe op een openpyxl worksheet."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    _HDR_FILL = PatternFill('solid', fgColor='AFC4D0')
+    _ALT_FILL = PatternFill('solid', fgColor='EEF2FA')
+    _WHT_FILL = PatternFill('solid', fgColor='FFFFFF')
+    _HDR_FONT = Font(name='Calibri', bold=True, size=10, color='0D1A26')
+    _DAT_FONT = Font(name='Calibri', size=10, color='1E293B')
+    _THIN = Side(style='thin', color='C8D4E8')
+    _BDR  = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
+
+    # Kolombreedte op basis van inhoud
+    for i, col in enumerate(df.columns, start=1):
+        lengths = [len(str(col))] + [len(str(v)) for v in df[col] if pd.notna(v)]
+        ws.column_dimensions[get_column_letter(i)].width = min(max(max(lengths) + 2, 10), 50)
+
+    # Header
+    for cell in ws[1]:
+        cell.fill = _HDR_FILL
+        cell.font = _HDR_FONT
+        cell.border = _BDR
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    ws.row_dimensions[1].height = 22
+
+    # Data rijen
+    for r_idx, row in enumerate(ws.iter_rows(min_row=2, max_row=ws.max_row), start=0):
+        ws.row_dimensions[r_idx + 2].height = 14
+        fill = _WHT_FILL if r_idx % 2 == 0 else _ALT_FILL
+        for cell in row:
+            cell.font = _DAT_FONT
+            cell.border = _BDR
+            cell.fill = fill
+            cell.alignment = Alignment(vertical='center')
+
+    ws.freeze_panes = 'A2'
+    ws.auto_filter.ref = ws.dimensions
+
+
 def _open_df_in_excel(df: pd.DataFrame, title: str, parent) -> None:
-    import os
-    import tempfile
+    import os, tempfile
     try:
-        safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in title)
-        tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', prefix=f'{safe}_', delete=False)
+        safe = ''.join(c if c.isalnum() or c in '-_ ' else '_' for c in title)
+        sheet = safe[:31]
+        tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', prefix=f'{safe[:20]}_', delete=False)
         tmp.close()
-        df.to_excel(tmp.name, index=False)
+        with pd.ExcelWriter(tmp.name, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name=sheet)
+            _style_excel_sheet(writer.sheets[sheet], df)
         os.startfile(tmp.name)
     except Exception as exc:
         QMessageBox.warning(parent, 'Export error', str(exc))
@@ -371,7 +413,7 @@ class _SpecialsDialog(QDialog):
             self._tbl.blockSignals(False)
 
     def _save(self):
-        from data.processor import save_user_variables
+        from data.processor import save_user_variables, load_user_variables
         bijz = {}
         idx = 0
         for r in range(self._tbl.rowCount()):
@@ -382,11 +424,38 @@ class _SpecialsDialog(QDialog):
             if any(item.values()):
                 bijz[str(idx)] = item
                 idx += 1
-        (self._user_vars
+
+        # Herlaad de laatste versie van schijf zodat andere vliegtuigen niet overschreven worden
+        try:
+            current = load_user_variables()
+        except Exception:
+            current = self._user_vars
+
+        # Detecteer conflict: zijn de specials van dit vliegtuig gewijzigd door iemand anders?
+        original_bijz = (self._user_vars
+                         .get('helikopter', {})
+                         .get(self._aircraft, {})
+                         .get('InspBijzonderheden', {}))
+        current_bijz  = (current
+                         .get('helikopter', {})
+                         .get(self._aircraft, {})
+                         .get('InspBijzonderheden', {}))
+        if current_bijz != original_bijz:
+            reply = QMessageBox.warning(
+                self, 'Conflict detected',
+                f'Specials for {self._aircraft} were modified by another user since you opened this dialog.\n\n'
+                'Do you want to overwrite their changes with yours?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        # Schrijf alleen de specials van dit vliegtuig in de vers herladen data
+        (current
          .setdefault('helikopter', {})
          .setdefault(self._aircraft, {})
          )['InspBijzonderheden'] = bijz
-        save_user_variables(self._user_vars)
+        save_user_variables(current)
         self.accept()
 
     def _export_excel(self):
@@ -476,8 +545,7 @@ class _EcuDialog(QDialog):
         btn_xls.setStyleSheet(_BTN_QSS)
         btn_xls.setFixedSize(36, 32)
         btn_xls.setIconSize(QSize(24, 24))
-        btn_xls.clicked.connect(lambda: _open_df_in_excel(
-            self._current_df, f'ECU{self._current_ecu}_{self._aircraft}', self))
+        btn_xls.clicked.connect(self._export_both)
         btn_row.addWidget(btn_xls)
         btn_row.addStretch()
         close_btn = QPushButton('Close')
@@ -507,7 +575,7 @@ class _EcuDialog(QDialog):
         self._current_df  = df
         self._current_ecu = ecu_nr
 
-        self._title_lbl.setText(f'<b style="font-size:13px">ECU {ecu_nr}  —  {self._aircraft}  —  SN: {sn}</b>')
+        self._title_lbl.setText(f'<b style="font-size:13px">{self._aircraft}  ECU{ecu_nr}  SN {sn}</b>')
 
         # Verwijder oude tabel
         while self._tbl_layout.count():
@@ -524,6 +592,35 @@ class _EcuDialog(QDialog):
         for r in range(tbl.rowCount()):
             tbl.setRowHeight(r, _DLG_ROW_H)
         self._tbl_layout.addWidget(tbl)
+
+    def _export_both(self):
+        import os, tempfile
+        from data.processor import get_ecu_status, get_ecu_serienumber
+
+        try:
+            df1 = get_ecu_status(self._aircraft, '1', self._df_cyc, self._sys_vars)
+            df2 = get_ecu_status(self._aircraft, '2', self._df_cyc, self._sys_vars)
+            sn1 = get_ecu_serienumber(self._aircraft, '1', self._df_cfg) if self._df_cfg is not None else 'n/b'
+            sn2 = get_ecu_serienumber(self._aircraft, '2', self._df_cfg) if self._df_cfg is not None else 'n/b'
+        except Exception as exc:
+            QMessageBox.warning(self, 'Export error', str(exc))
+            return
+
+        def _tab(ecu_nr, sn):
+            return f'{self._aircraft} ECU{ecu_nr} SN {sn}'[:31]
+
+        try:
+            tmp = tempfile.NamedTemporaryFile(
+                suffix='.xlsx', prefix=f'ECU_{self._aircraft}_', delete=False)
+            tmp.close()
+            with pd.ExcelWriter(tmp.name, engine='openpyxl') as writer:
+                df1.to_excel(writer, index=False, sheet_name=_tab('1', sn1))
+                df2.to_excel(writer, index=False, sheet_name=_tab('2', sn2))
+                _style_excel_sheet(writer.sheets[_tab('1', sn1)], df1)
+                _style_excel_sheet(writer.sheets[_tab('2', sn2)], df2)
+            os.startfile(tmp.name)
+        except Exception as exc:
+            QMessageBox.warning(self, 'Export error', str(exc))
 
 
 # ---------------------------------------------------------------------------

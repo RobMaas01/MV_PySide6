@@ -532,7 +532,7 @@ class PlanningTab(QWidget):
 
         # Info bar
         info_bar = QWidget()
-        info_bar.setFixedHeight(28)
+        info_bar.setFixedHeight(50)
         info_bar.setStyleSheet(f'background: {SLATE_800}; border-radius: 4px;')
         ib = QHBoxLayout(info_bar)
         ib.setContentsMargins(10, 0, 10, 0)
