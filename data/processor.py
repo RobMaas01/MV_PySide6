@@ -186,15 +186,54 @@ def get_ecu_serienumber(aircraft: str, ecu_nr: str, df_cfg: pd.DataFrame) -> str
 
 
 def save_user_variables(user_vars: dict) -> None:
-    """Slaat user variabelen op naar MV_UserVariabelen.json."""
+    """Slaat user variabelen op naar MV_UserVariabelen.json.
+
+    Ook wordt de "last_change" flag ge"update via touch_meta(), zodat
+    andere processen kunnen detecteren dat er iets gewijzigd is.
+    """
     path = _settings_dir() / 'MV_UserVariabelen.json'
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(user_vars, f, ensure_ascii=False, indent=2)
+    # flag bijwerken
+    touch_meta()
 
 
 # ---------------------------------------------------------------------------
 # Bijzonderheden
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# wijzigingsflag (last_change.txt)
+# ---------------------------------------------------------------------------
+
+_meta_path: Path | None = None
+
+
+def _get_meta_path() -> Path:
+    global _meta_path
+    if _meta_path is None:
+        _meta_path = _settings_dir() / 'last_change.txt'
+    return _meta_path
+
+
+def touch_meta() -> None:
+    """Maak (of update) het "last_change" bestand.
+
+    Het bestand bevat geen inhoud; we updaten alleen de modificatietijd.
+    """
+    p = _get_meta_path()
+    p.parent.mkdir(exist_ok=True)
+    # schrijf lege inhoud en zet mtime op nu
+    p.write_text('')
+
+
+def last_meta() -> float:
+    """Retourneer de modificatietijd van de flag, of 0 als niet aanwezig."""
+    try:
+        return _get_meta_path().stat().st_mtime
+    except FileNotFoundError:
+        return 0.0
+
 
 def get_bijzonderheden(aircraft: str, user_vars: dict, sys_vars: dict,
                        df_cycle: pd.DataFrame) -> pd.DataFrame:

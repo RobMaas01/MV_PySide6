@@ -9,11 +9,20 @@ Tabel-namen komen overeen met de oorspronkelijke Excel-bestandsnamen:
   statusbord, configuratie, mis, 3ms
 """
 import logging
+import shutil
 import sqlite3
 import sys
 from pathlib import Path
 
 import pandas as pd
+# used to mark data changes so other instances can reload
+def _flag_touch():
+    try:
+        from data.processor import touch_meta
+        touch_meta()
+    except Exception:
+        pass
+
 
 log = logging.getLogger(__name__)
 
@@ -123,14 +132,15 @@ _REQUIRED_STATUSBORD_COLS = {
 def import_statusbord(path: Path) -> dict:
     """
     Importeer statusbord.xlsx naar SQLite na kolomvalidatie.
+    Stappen: lees + valideer → kopieer naar datasource/ → schrijf naar SQLite.
 
     Geeft een dict terug:
-      {'rows': int, 'previous': int, 'error': str | None}
+      {'rows': int, 'previous': int, 'error': str | None, 'copied_to': str}
     """
     try:
         df = pd.read_excel(path, converters={'CyclusPOpakk': str})
     except Exception as exc:
-        return {'rows': 0, 'previous': 0, 'error': f'Kan bestand niet lezen: {exc}'}
+        return {'rows': 0, 'previous': 0, 'error': f'Kan bestand niet lezen: {exc}', 'copied_to': ''}
 
     missing = _REQUIRED_STATUSBORD_COLS - set(df.columns)
     if missing:
@@ -138,7 +148,17 @@ def import_statusbord(path: Path) -> dict:
             'rows': 0,
             'previous': 0,
             'error': f'Verplichte kolommen ontbreken: {", ".join(sorted(missing))}',
+            'copied_to': '',
         }
+
+    # Kopieer het bronbestand naar de datasource-map
+    dest_dir = db_path().parent
+    dest_file = dest_dir / 'statusbord.xlsx'
+    try:
+        shutil.copy2(path, dest_file)
+        log.info('Statusbord gekopieerd naar %s', dest_file)
+    except Exception as exc:
+        return {'rows': 0, 'previous': 0, 'error': f'Kopiëren mislukt: {exc}', 'copied_to': ''}
 
     _normalize_dates(df)
 
@@ -151,9 +171,11 @@ def import_statusbord(path: Path) -> dict:
 
         df.to_sql('statusbord', conn, if_exists='replace', index=False)
         log.info('Statusbord geïmporteerd: %d rijen (was %d)', len(df), previous)
-        return {'rows': len(df), 'previous': previous, 'error': None}
+        # update flag after successful import
+        _flag_touch()
+        return {'rows': len(df), 'previous': previous, 'error': None, 'copied_to': str(dest_file)}
     except Exception as exc:
-        return {'rows': 0, 'previous': 0, 'error': str(exc)}
+        return {'rows': 0, 'previous': 0, 'error': str(exc), 'copied_to': ''}
     finally:
         conn.close()
 

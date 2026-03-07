@@ -7,7 +7,7 @@ from PySide6.QtCore import (
     Qt, QDate, QTimer, Signal,
     QAbstractTableModel, QModelIndex, QSortFilterProxyModel, QPoint, QRect,
 )
-from PySide6.QtGui import QBrush, QColor, QFontMetrics, QPolygon
+from PySide6.QtGui import QBrush, QColor, QFontMetrics, QIcon, QPainter, QPixmap, QPolygon
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDoubleSpinBox,
     QFrame, QGroupBox, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
@@ -25,24 +25,39 @@ class _CompactItemDelegate(QStyledItemDelegate):
 from ui.theme import SLATE_400, SLATE_900, SLATE_800, SLATE_700, SLATE_600, WHITE
 from ui.tabs.overview_tab import (
     _BgDelegate, _TBL_QSS,
-    TBL_BG, TBL_ALT, NEG_BG, NEG_FG,
+    TBL_BG, TBL_ALT, TBL_TEXT, TBL_BDR, NEG_BG, NEG_FG,
     AC_COL_HDR, AC_COL_BDR,
 )
 
 AMBER_BG  = '#f5e17a'
 ORANGE_BG = '#f5a85e'
 
-_EXPORT_BTN_QSS = f"""
-    QPushButton {{
-        background-color: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {AC_COL_BDR},stop:1 {AC_COL_HDR});
-        color: #1a1a1a; border: 1px solid {AC_COL_BDR}; border-bottom: 2px solid #3a5a6e;
-        border-radius: 4px; font-size: 11px; font-weight: bold; padding: 4px 14px; min-width: 120px;
-    }}
-    QPushButton:hover {{
-        background-color: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #8aabb8,stop:1 {AC_COL_BDR});
-    }}
-    QPushButton:pressed {{ background-color: {AC_COL_HDR}; border-bottom: 1px solid #3a5a6e; padding-top: 5px; }}
-    QPushButton:disabled {{ background-color: {SLATE_700}; color: {SLATE_400}; border: 1px solid {SLATE_600}; border-bottom: 1px solid {SLATE_600}; }}
+_EXPORT_BTN_QSS = """
+    QPushButton {
+        background-color: qlineargradient(
+            x1:0, y1:0, x2:0, y2:1,
+            stop:0 #8aafc0, stop:1 #afc4d0
+        );
+        color: #1a1a1a;
+        border: 1px solid #8aafc0;
+        border-bottom: 2px solid #3a5a6e;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: bold;
+        padding: 6px 20px;
+    }
+    QPushButton:hover {
+        background-color: qlineargradient(
+            x1:0, y1:0, x2:0, y2:1,
+            stop:0 #8aabb8, stop:1 #8aafc0
+        );
+    }
+    QPushButton:pressed {
+        background-color: #afc4d0;
+        border-bottom: 1px solid #3a5a6e;
+        padding-top: 9px;
+    }
+    QPushButton:disabled { background: #4a5568; color: #94a3b8; border: 1px solid #4a5568; }
 """
 
 _FILTER_QSS = f"""
@@ -228,13 +243,19 @@ class MultiColumnFilterProxy(QSortFilterProxyModel):
 
 class _FilterPopup(QFrame):
     applied = Signal(object)   # set[str] | None
+    sorted  = Signal(int)      # Qt.SortOrder value
 
     def __init__(self, values: list[str], current: set | None, parent=None):
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setObjectName('filterPopup')
+        self._all_values = values
         self.setStyleSheet(f"""
             QFrame#filterPopup {{
                 background: {SLATE_800}; border: 1px solid {SLATE_600}; border-radius: 4px;
+            }}
+            QLineEdit {{
+                background: {SLATE_700}; color: {WHITE}; border: 1px solid {SLATE_600};
+                border-radius: 3px; padding: 2px 5px; font-size: 10px;
             }}
             QListWidget {{
                 background: {SLATE_700}; color: {WHITE}; border: 1px solid {SLATE_600};
@@ -243,10 +264,11 @@ class _FilterPopup(QFrame):
             QListWidget::item {{ padding: 2px 6px; }}
             QListWidget::item:hover {{ background: {SLATE_600}; }}
             QPushButton {{
-                background: {SLATE_700}; color: {WHITE}; border: 1px solid {SLATE_600};
-                border-radius: 3px; padding: 3px 14px; font-size: 10px;
+                background-color: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #8aafc0,stop:1 #afc4d0);
+                color: #1a1a1a; border: 1px solid #8aafc0; border-bottom: 2px solid #3a5a6e;
+                border-radius: 4px; padding: 4px 12px; font-size: 11px; font-weight: bold;
             }}
-            QPushButton:hover {{ background: {SLATE_600}; }}
+            QPushButton:hover {{ background-color: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #8aabb8,stop:1 #8aafc0); }}
             QCheckBox {{ color: {WHITE}; font-size: 10px; padding: 2px 4px; }}
         """)
 
@@ -254,12 +276,33 @@ class _FilterPopup(QFrame):
         v.setContentsMargins(6, 6, 6, 6)
         v.setSpacing(4)
 
+        # Sorteerknoppen
+        sort_row = QHBoxLayout()
+        sort_row.setSpacing(4)
+        btn_asc  = QPushButton('↑  A → Z')
+        btn_desc = QPushButton('↓  Z → A')
+        btn_asc.setFixedHeight(22)
+        btn_desc.setFixedHeight(22)
+        btn_asc.clicked.connect(lambda: (
+            self.sorted.emit(Qt.SortOrder.AscendingOrder.value), self.close()))
+        btn_desc.clicked.connect(lambda: (
+            self.sorted.emit(Qt.SortOrder.DescendingOrder.value), self.close()))
+        sort_row.addWidget(btn_asc)
+        sort_row.addWidget(btn_desc)
+        v.addLayout(sort_row)
+
+        # Zoekbalk (Enter = filter, leeg + Enter = reset)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText('Bevat...  [Enter]')
+        self._search.setFixedHeight(22)
+        v.addWidget(self._search)
+
         self._chk_all = QCheckBox('(Select All)')
         v.addWidget(self._chk_all)
 
         self._lst = QListWidget()
         self._lst.setMaximumHeight(220)
-        self._lst.setMinimumWidth(160)
+        self._lst.setMinimumWidth(200)
 
         all_checked = current is None
         self._lst.blockSignals(True)
@@ -285,10 +328,27 @@ class _FilterPopup(QFrame):
         btn_row.addWidget(btn_cancel)
         v.addLayout(btn_row)
 
+        self._search.returnPressed.connect(self._on_search)
         self._chk_all.stateChanged.connect(self._toggle_all)
         self._lst.itemChanged.connect(self._update_chk_all)
         self._update_chk_all()
         self.adjustSize()
+
+    def _on_search(self):
+        txt = self._search.text().lower()
+        for i in range(self._lst.count()):
+            item = self._lst.item(i)
+            item.setHidden(bool(txt) and txt not in item.text().lower())
+        self._update_chk_all()
+        # Pas de tabelfilter direct toe op Enter
+        if txt:
+            visible = {self._lst.item(i).data(Qt.ItemDataRole.UserRole)
+                       for i in range(self._lst.count())
+                       if not self._lst.item(i).isHidden()}
+            self.applied.emit(visible or None)
+        else:
+            self.applied.emit(None)
+        self.close()
 
     def _toggle_all(self, state):
         if state == Qt.CheckState.PartiallyChecked.value:
@@ -296,16 +356,19 @@ class _FilterPopup(QFrame):
         ck = Qt.CheckState.Checked if state == Qt.CheckState.Checked.value else Qt.CheckState.Unchecked
         self._lst.blockSignals(True)
         for i in range(self._lst.count()):
-            self._lst.item(i).setCheckState(ck)
+            if not self._lst.item(i).isHidden():
+                self._lst.item(i).setCheckState(ck)
         self._lst.blockSignals(False)
 
     def _update_chk_all(self):
-        n       = self._lst.count()
-        checked = sum(1 for i in range(n) if self._lst.item(i).checkState() == Qt.CheckState.Checked)
+        visible = [self._lst.item(i) for i in range(self._lst.count()) if not self._lst.item(i).isHidden()]
+        if not visible:
+            return
+        checked = sum(1 for it in visible if it.checkState() == Qt.CheckState.Checked)
         self._chk_all.blockSignals(True)
-        if   checked == 0: self._chk_all.setCheckState(Qt.CheckState.Unchecked)
-        elif checked == n: self._chk_all.setCheckState(Qt.CheckState.Checked)
-        else:              self._chk_all.setCheckState(Qt.CheckState.PartiallyChecked)
+        if   checked == 0:          self._chk_all.setCheckState(Qt.CheckState.Unchecked)
+        elif checked == len(visible): self._chk_all.setCheckState(Qt.CheckState.Checked)
+        else:                        self._chk_all.setCheckState(Qt.CheckState.PartiallyChecked)
         self._chk_all.blockSignals(False)
 
     def _apply(self):
@@ -358,6 +421,33 @@ class FilterHeaderView(QHeaderView):
         super().mousePressEvent(event)
 
 
+def _make_clear_filter_icon(size: int = 18) -> QIcon:
+    """Filter-off icoon: trechter met diagonale rode streep."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    s = size
+    # Trechter (funnel) in slate-blauw
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(QColor('#6a9ab8')))
+    pts = QPolygon([
+        QPoint(1, 2), QPoint(s - 1, 2),
+        QPoint(s // 2 + 2, s // 2 - 1),
+        QPoint(s // 2 + 2, s - 2),
+        QPoint(s // 2 - 2, s - 2),
+        QPoint(s // 2 - 2, s // 2 - 1),
+    ])
+    p.drawPolygon(pts)
+    # Diagonale streep (filter = uit)
+    from PySide6.QtGui import QPen as _QPen
+    p.setPen(_QPen(QColor('#e05050'), 2.2, Qt.PenStyle.SolidLine,
+                   Qt.PenCapStyle.RoundCap))
+    p.drawLine(s - 3, 1, 1, s - 2)
+    p.end()
+    return QIcon(pm)
+
+
 # ---------------------------------------------------------------------------
 # Planning tab
 # ---------------------------------------------------------------------------
@@ -378,7 +468,7 @@ class PlanningTab(QWidget):
     def _build_ui(self):
         self.setStyleSheet(f'background: {SLATE_900};')
         main = QVBoxLayout(self)
-        main.setContentsMargins(10, 6, 6, 6)
+        main.setContentsMargins(8, 6, 6, 6)
         main.setSpacing(4)
 
         # Top row
@@ -450,23 +540,35 @@ class PlanningTab(QWidget):
         self._lbl_count = QLabel('No inspections loaded')
         self._lbl_count.setStyleSheet(f'color: {WHITE}; font-size: 11px; background: transparent;')
         ib.addWidget(self._lbl_count)
+        ib.addSpacing(75)  # ~2 cm
+        self._btn_clear_filter = QPushButton()
+        self._btn_clear_filter.setIcon(_make_clear_filter_icon(16))
+        self._btn_clear_filter.setToolTip('Verwijder alle filters')
+        self._btn_clear_filter.setFixedSize(22, 22)
+        self._btn_clear_filter.setStyleSheet(f"""
+            QPushButton {{ background: transparent; border: none; }}
+            QPushButton:hover {{ background: rgba(255,255,255,30); border-radius: 3px; }}
+        """)
+        # verbinding na proxy-aanmaak
+        ib.addWidget(self._btn_clear_filter)
         ib.addStretch()
         self._btn_export = QPushButton('Export to Excel')
         self._btn_export.setStyleSheet(_EXPORT_BTN_QSS)
         self._btn_export.setEnabled(False)
         self._btn_export.clicked.connect(self._export_xls)
         ib.addWidget(self._btn_export)
-        main.addWidget(info_bar)
-
         # Table
         self._model = PlanningTableModel(self)
         self._proxy = MultiColumnFilterProxy(self)
         self._proxy.setSourceModel(self._model)
         self._proxy.filtersChanged.connect(self._update_count)
+        self._btn_clear_filter.clicked.connect(self._proxy.clear_all_filters)
 
         self._tbl = QTableView()
         self._tbl.setStyleSheet(
-            _TBL_QSS + 'QTableView::item { padding-left: 4px; padding-right: 4px; }'
+            _TBL_QSS
+            + f'QTableView {{ color: {TBL_TEXT}; gridline-color: {TBL_BDR}; }}'
+            + f'QTableView::item {{ color: {TBL_TEXT}; background-color: {TBL_BG}; padding-left: 4px; padding-right: 4px; }}'
         )
         self._tbl.setModel(self._proxy)
         self._tbl.verticalHeader().setVisible(False)
@@ -485,7 +587,13 @@ class PlanningTab(QWidget):
         self._tbl.setHorizontalHeader(self._hdr)
         self._hdr.filterArrowClicked.connect(self._show_filter_popup)
 
-        main.addWidget(self._tbl, stretch=1)
+        # Info bar + tabel samen verschoven (~2cm)
+        right_col = QVBoxLayout()
+        right_col.setContentsMargins(50, 0, 0, 0)
+        right_col.setSpacing(4)
+        right_col.addWidget(info_bar)
+        right_col.addWidget(self._tbl, stretch=1)
+        main.addLayout(right_col, stretch=1)
 
     def _make_combo(self) -> QComboBox:
         self._combo_ac = QComboBox()
@@ -687,6 +795,8 @@ class PlanningTab(QWidget):
             self,
         )
         popup.applied.connect(lambda sel, c=col: self._proxy.set_filter(c, sel))
+        popup.sorted.connect(lambda order, c=col: self._tbl.sortByColumn(
+            c, Qt.SortOrder(order)))
         popup.adjustSize()
         popup.move(pos.x() - popup.width() // 2, pos.y() + 4)
         popup.show()

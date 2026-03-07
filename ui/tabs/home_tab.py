@@ -2,19 +2,20 @@
 Home-tab: welkomstscherm met overzichtskaarten en helikopter-selectie.
 """
 import json
+import logging
 from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
-    QVBoxLayout, QWidget,
+    QCheckBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ui.theme import BLUE_600, BLUE_700, SLATE_400, SLATE_700, WHITE
+from ui.theme import SLATE_400, SLATE_700, WHITE
 
-_ICON_PATH   = Path(__file__).parent.parent.parent / 'assets' / 'NH90.PNG'
+_ICON_PATH   = Path(__file__).parent.parent.parent / 'assets' / 'NH90_Main.PNG'
 _UV_FILE     = Path(__file__).parent.parent.parent / 'settings' / 'MV_UserVariabelen.json'
 
 _CB_QSS = f"""
@@ -30,34 +31,34 @@ _CB_QSS = f"""
     }}
 """
 
-_BTN_QSS = f"""
-    QPushButton {{
-        background: {BLUE_700};
-        color: {WHITE};
-        border: none;
-        border-radius: 6px;
-        padding: 10px 32px;
-        font-size: 13px;
+_BTN_QSS = """
+    QPushButton {
+        background-color: qlineargradient(
+            x1:0, y1:0, x2:0, y2:1,
+            stop:0 #8aafc0, stop:1 #afc4d0
+        );
+        color: #1a1a1a;
+        border: 1px solid #8aafc0;
+        border-bottom: 2px solid #3a5a6e;
+        border-radius: 4px;
+        font-size: 12px;
         font-weight: bold;
-    }}
-    QPushButton:hover {{
-        background: {BLUE_600};
-    }}
+        padding: 6px 20px;
+    }
+    QPushButton:hover {
+        background-color: qlineargradient(
+            x1:0, y1:0, x2:0, y2:1,
+            stop:0 #8aabb8, stop:1 #8aafc0
+        );
+    }
+    QPushButton:pressed {
+        background-color: #afc4d0;
+        border-bottom: 1px solid #3a5a6e;
+        padding-top: 9px;
+    }
 """
 
-_BTN_GHOST_QSS = f"""
-    QPushButton {{
-        background: transparent;
-        color: {WHITE};
-        border: 1px solid rgba(100,140,200,120);
-        border-radius: 6px;
-        padding: 10px 32px;
-        font-size: 13px;
-    }}
-    QPushButton:hover {{
-        background: rgba(100,140,200,40);
-    }}
-"""
+_BTN_GHOST_QSS = _BTN_QSS
 
 
 def _stat_card(title: str, init_value: str = '-', subtitle: str = '') -> tuple:
@@ -69,19 +70,19 @@ def _stat_card(title: str, init_value: str = '-', subtitle: str = '') -> tuple:
             border-radius: 10px;
         }
     """)
-    card.setFixedSize(190, 105)
+    card.setFixedSize(143, 79)
 
     v = QVBoxLayout(card)
-    v.setContentsMargins(18, 14, 18, 14)
-    v.setSpacing(3)
+    v.setContentsMargins(14, 11, 14, 11)
+    v.setSpacing(2)
 
     lbl_t = QLabel(title)
     lbl_t.setStyleSheet(
-        f'color: {SLATE_400}; font-size: 11px; background: transparent; border: none;'
+        f'color: {SLATE_400}; font-size: 9px; background: transparent; border: none;'
     )
     lbl_v = QLabel(init_value)
     lbl_v.setStyleSheet(
-        f'color: {WHITE}; font-size: 30px; font-weight: bold; background: transparent; border: none;'
+        f'color: {WHITE}; font-size: 22px; font-weight: bold; background: transparent; border: none;'
     )
     v.addWidget(lbl_t)
     v.addWidget(lbl_v)
@@ -89,7 +90,7 @@ def _stat_card(title: str, init_value: str = '-', subtitle: str = '') -> tuple:
     if subtitle:
         lbl_s = QLabel(subtitle)
         lbl_s.setStyleSheet(
-            'color: rgba(160,195,235,160); font-size: 10px; background: transparent; border: none;'
+            'color: rgba(160,195,235,160); font-size: 8px; background: transparent; border: none;'
         )
         v.addWidget(lbl_s)
 
@@ -101,6 +102,7 @@ class HomeTab(QWidget):
 
     tab_switch_requested = Signal(int)
     settings_saved       = Signal()
+    import_completed     = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -139,25 +141,21 @@ class HomeTab(QWidget):
 
         icon_lbl = QLabel()
         icon_pix = QPixmap(str(_ICON_PATH)).scaled(
-            72, 72, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            240, 240, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
         )
         icon_lbl.setPixmap(icon_pix)
         icon_lbl.setStyleSheet('background: transparent;')
         logo_row.addWidget(icon_lbl)
 
-        title_col = QVBoxLayout()
-        title_col.setSpacing(4)
-        lbl_title = QLabel('Maintenance Viewer')
-        lbl_title.setStyleSheet(
-            'color: white; font-size: 34px; font-weight: bold; background: transparent;'
+        lbl_combined = QLabel(
+            '<span style="font-size:34px; font-weight:bold; color:white; line-height:1;">'
+            'Maintenance Viewer</span><br>'
+            '<span style="font-size:14px; color:rgba(160,195,235,200); line-height:1;">'
+            'NH90 Materiaal Logistiek Dashboard</span>'
         )
-        lbl_sub = QLabel('NH90 Maintenance Dashboard')
-        lbl_sub.setStyleSheet(
-            'color: rgba(160,195,235,200); font-size: 14px; background: transparent;'
-        )
-        title_col.addWidget(lbl_title)
-        title_col.addWidget(lbl_sub)
-        logo_row.addLayout(title_col)
+        lbl_combined.setTextFormat(Qt.TextFormat.RichText)
+        lbl_combined.setStyleSheet('background: transparent; padding: 0; margin: 0;')
+        logo_row.addWidget(lbl_combined)
 
         center.addLayout(logo_row)
         center.addSpacing(44)
@@ -169,9 +167,9 @@ class HomeTab(QWidget):
 
         card_defs = [
             ('aircraft', 'Aircraft',             ''),
-            ('cal',      'Calendar inspections', 'next 30 days'),
-            ('cyc',      'Cycle items',          'next 30 days'),
-            ('warn',     'Warnings',             'expired / critical'),
+            ('cal',      'Calendar inspections', 'next 7 days'),
+            ('uren',     'Flight hrs inspections', '< 10 hrs remaining'),
+            ('land',     'Landing inspections',   '< 20 landings'),
         ]
         for key, title, sub in card_defs:
             card, val_lbl = _stat_card(title, '-', sub)
@@ -182,22 +180,23 @@ class HomeTab(QWidget):
         center.addSpacing(38)
 
         # Navigatieknoppen
+        nav_defs = [
+            ('Overview',      1),
+            ('Planning',      2),
+            ('Configuration', 3),
+            ('Part. insp.',   4),
+            ('MIS',           5),
+        ]
         btn_row = QHBoxLayout()
         btn_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        btn_row.setSpacing(14)
-
-        btn_ov = QPushButton('Overview')
-        btn_ov.setStyleSheet(_BTN_QSS)
-        btn_ov.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_ov.clicked.connect(lambda: self.tab_switch_requested.emit(1))
-
-        btn_pl = QPushButton('Planning')
-        btn_pl.setStyleSheet(_BTN_GHOST_QSS)
-        btn_pl.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_pl.clicked.connect(lambda: self.tab_switch_requested.emit(2))
-
-        btn_row.addWidget(btn_ov)
-        btn_row.addWidget(btn_pl)
+        btn_row.setSpacing(10)
+        for label, idx in nav_defs:
+            btn = QPushButton(label)
+            btn.setStyleSheet(_BTN_QSS)
+            btn.setFixedWidth(120)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda checked, i=idx: self.tab_switch_requested.emit(i))
+            btn_row.addWidget(btn)
         center.addLayout(btn_row)
 
         center.addStretch(3)
@@ -211,7 +210,7 @@ class HomeTab(QWidget):
         right.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         heli_frame = QFrame()
-        heli_frame.setFixedWidth(300)
+        heli_frame.setFixedWidth(210)
         heli_frame.setStyleSheet("""
             QFrame {
                 background: rgba(30, 41, 59, 180);
@@ -261,15 +260,8 @@ class HomeTab(QWidget):
 
         save_row = QHBoxLayout()
         save_row.setSpacing(10)
-        save_btn = QPushButton('Opslaan')
-        save_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {BLUE_700}; color: {WHITE};
-                border: none; border-radius: 5px;
-                padding: 4px 14px; font-size: 12px;
-            }}
-            QPushButton:hover {{ background: {BLUE_600}; }}
-        """)
+        save_btn = QPushButton('Save')
+        save_btn.setStyleSheet(_BTN_QSS)
         save_btn.setFixedHeight(26)
         save_btn.clicked.connect(self._save_helis)
         self._heli_status = QLabel('')
@@ -281,7 +273,17 @@ class HomeTab(QWidget):
         save_row.addStretch()
         vh.addLayout(save_row)
 
+        self._import_btn = QPushButton('Import statusboard')
+        self._import_btn.setStyleSheet(_BTN_QSS)
+        self._import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._import_btn.setFixedWidth(210)
+        self._import_btn.setFixedHeight(28)
+        self._import_btn.clicked.connect(self._import_statusbord)
+        right.addWidget(self._import_btn)
+        right.addSpacing(8)
+
         right.addWidget(heli_frame)
+
         body.addLayout(right)
 
         outer.addLayout(body, 1)
@@ -303,6 +305,44 @@ class HomeTab(QWidget):
         footer.addStretch()
         footer.addWidget(lbl_date)
         outer.addLayout(footer)
+
+    # ------------------------------------------------------------------
+    # Import
+    # ------------------------------------------------------------------
+
+    def _import_statusbord(self) -> None:
+        downloads = str(Path.home() / 'Downloads')
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Select statusboard.xlsx', downloads, 'Excel files (*.xlsx *.xls)'
+        )
+        if not path:
+            return
+
+        from data.database import import_statusbord
+
+        self._import_btn.setEnabled(False)
+        result = import_statusbord(Path(path))
+        self._import_btn.setEnabled(True)
+
+        if result['error']:
+            QMessageBox.warning(
+                self, 'Import failed',
+                f'Statusboard could not be imported:\n\n{result["error"]}'
+            )
+            return
+
+        rows       = result['rows']
+        previous   = result.get('previous', 0)
+        copied_to  = result.get('copied_to', '')
+        QMessageBox.information(
+            self, 'Import successful',
+            f'Statusboard imported successfully.\n\n'
+            f'Imported: {rows:,} rows\n'
+            f'Previous: {previous:,} rows\n'
+            f'Saved to: {copied_to}\n\n'
+            f'Screens will now be updated.'
+        )
+        self.import_completed.emit()
 
     # ------------------------------------------------------------------
     # Helikopter-selectie
@@ -327,6 +367,12 @@ class HomeTab(QWidget):
                 uv['helikopter'][name]['Location_1'] = cb.isChecked()
         with open(_UV_FILE, 'w', encoding='utf-8') as f:
             json.dump(uv, f, indent=2, ensure_ascii=False)
+        # update flag zodat anderen kunnen zien dat er iets is veranderd
+        try:
+            from data.processor import touch_meta
+            touch_meta()
+        except Exception:
+            pass
         self._heli_status.setText('v  Saved')
         self.settings_saved.emit()
 
@@ -344,19 +390,26 @@ class HomeTab(QWidget):
 
             df_sb   = prepare_statusbord(store.statusbord) if store.statusbord is not None else None
             ac_list = get_aircraft_list(df_sb, user_vars) if df_sb is not None else []
-            df_cal  = get_calendar_inspections(df_sb) if df_sb is not None else pd.DataFrame()
-            df_cyc  = get_cycle_inspections(df_sb)  if df_sb is not None else pd.DataFrame()
+            df_filtered = df_sb[df_sb['Aircraft'].isin(ac_list)] if df_sb is not None else None
+            df_cal  = get_calendar_inspections(df_filtered) if df_filtered is not None else pd.DataFrame()
+            df_cyc  = get_cycle_inspections(df_filtered)  if df_filtered is not None else pd.DataFrame()
+
+            # Kalender: alleen items komende 7 dagen
+            if not df_cal.empty and 'Rest' in df_cal.columns:
+                df_cal = df_cal[df_cal['Rest'] <= 7]
+
+            # Cycle opsplitsen op eenheid en drempelwaarde
+            if not df_cyc.empty and 'Eenheid cyclus' in df_cyc.columns:
+                df_uren = df_cyc[(df_cyc['Eenheid cyclus'] == 'UUR') & (pd.to_numeric(df_cyc['Rest'], errors='coerce') < 10)]
+                df_land = df_cyc[(df_cyc['Eenheid cyclus'] == 'ST')  & (pd.to_numeric(df_cyc['Rest'], errors='coerce') < 20)]
+            else:
+                df_uren = pd.DataFrame()
+                df_land = pd.DataFrame()
 
             self._stat_labels['aircraft'].setText(str(len(ac_list)))
             self._stat_labels['cal'].setText(str(len(df_cal)))
-            self._stat_labels['cyc'].setText(str(len(df_cyc)))
-
-            warn = 0
-            if not df_cal.empty and 'days_remaining' in df_cal.columns:
-                warn += int((df_cal['days_remaining'] <= 0).sum())
-            if not df_cyc.empty and 'remaining' in df_cyc.columns:
-                warn += int((df_cyc['remaining'] <= 0).sum())
-            self._stat_labels['warn'].setText(str(warn))
+            self._stat_labels['uren'].setText(str(len(df_uren)))
+            self._stat_labels['land'].setText(str(len(df_land)))
 
         except Exception:
-            pass
+            logging.warning('update_stats mislukt', exc_info=True)

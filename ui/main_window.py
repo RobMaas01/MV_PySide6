@@ -3,9 +3,14 @@ Hoofdvenster voor MV3 (PySide6).
 Navigatie als tabbalk bovenaan — geen zijbalk.
 Content neemt de volledige breedte in.
 """
+import json
+import logging
+import os
+import sys
+from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QCursor, QIcon
 from PySide6.QtWidgets import (
     QLabel,
@@ -28,7 +33,7 @@ _NAV_ITEMS = [
     ('Configuration', 'configuration'),
     ('Part. insp.',   'partnumber'),
     ('MIS',           'mis'),
-    ('Settings',      'settings'),
+    ('Info',          'info'),
 ]
 
 _TAB_QSS = f"""
@@ -62,13 +67,53 @@ _TAB_QSS = f"""
 """
 
 
+def _track_login() -> tuple[str, int]:
+    """
+    Lees Windows-gebruikersnaam, verhoog de login-teller in MV_UserVariabelen.json
+    en geef (username, count) terug.
+    """
+    username = os.environ.get('USERNAME') or os.environ.get('USER') or ''
+
+    if getattr(sys, 'frozen', False):
+        uv_file = Path(sys.executable).parent / 'settings' / 'MV_UserVariabelen.json'
+    else:
+        uv_file = Path(__file__).parent.parent / 'settings' / 'MV_UserVariabelen.json'
+
+    try:
+        with open(uv_file, encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        return username, 1
+
+    logins = data.setdefault('logins', {})
+    entry  = logins.setdefault(username, {'count': 0, 'last': ''})
+    entry['count'] += 1
+    entry['last']   = datetime.now().strftime('%d/%m/%Y %H:%M')
+
+    try:
+        with open(uv_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+    return username, entry['count']
+
+
 class MainWindow(QMainWindow):
     window_closed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._store = None
+        # timer to poll for external changes (last_change.txt) + visible check counter
+        self._last_flag = 0.0
+        self._check_interval_sec = 5
+        self._update_check_count = 1
+        self._meta_timer = QTimer(self)
+        self._meta_timer.timeout.connect(self._check_for_updates)
+
         self._build_ui()
+        self._meta_timer.start(self._check_interval_sec * 1000)   # iedere 5 seconden
         self._start_loading()
 
     # ------------------------------------------------------------------
@@ -79,7 +124,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle('Maintenance Viewer')
         self.setMinimumSize(1000, 600)
         self.setStyleSheet(APP_QSS)
-        self.setWindowIcon(QIcon(str(Path(__file__).parent.parent / 'assets' / 'NH90.PNG')))
+        self.setWindowIcon(QIcon(str(Path(__file__).parent.parent / 'assets' / 'NH90_taskbar.PNG')))
 
         self._tabs = QTabWidget()
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
@@ -90,6 +135,7 @@ class MainWindow(QMainWindow):
         self._home_tab = HomeTab()
         self._home_tab.tab_switch_requested.connect(self._tabs.setCurrentIndex)
         self._home_tab.settings_saved.connect(self._refresh_overview)
+        self._home_tab.import_completed.connect(self._reload_data)
         self._tabs.addTab(self._home_tab, 'Home')
 
         # Pagina 1: Overzicht
@@ -109,9 +155,7 @@ class MainWindow(QMainWindow):
 
         # Settings-tab
         self._settings_tab = SettingsTab()
-        self._tabs.addTab(self._settings_tab, 'Settings')
-        self._settings_tab.settings_saved.connect(self._refresh_overview)
-        self._settings_tab.import_completed.connect(self._reload_data)
+        self._tabs.addTab(self._settings_tab, 'Info')
 
         self.setCentralWidget(self._tabs)
 
@@ -127,6 +171,16 @@ class MainWindow(QMainWindow):
         """)
         self.setStatusBar(self._status_bar)
 
+        username, login_count = _track_login()
+        _user_lbl = QLabel(f'  Welcome, {username}   |   Logins: {login_count}  ')
+        _user_lbl.setStyleSheet(f'color: {SLATE_400}; font-size: 11px; background: transparent;')
+        self._status_bar.addPermanentWidget(_user_lbl)
+
+        self._update_lbl = QLabel('')
+        self._update_lbl.setStyleSheet(f'color: {SLATE_400}; font-size: 11px; background: transparent;')
+        self._status_bar.addPermanentWidget(self._update_lbl)
+        self._render_update_counter()
+
     # ------------------------------------------------------------------
     # Laden
     # ------------------------------------------------------------------
@@ -138,6 +192,12 @@ class MainWindow(QMainWindow):
     def on_data_loaded(self, store) -> None:
         self._store = store
         self.unsetCursor()
+        # stel de vlag in op huidige waarde, zodat we niet reloaden bij start
+        try:
+            from data.processor import last_meta
+            self._last_flag = last_meta()
+        except Exception:
+            pass
 
         names = [
             ('statusbord',   'Statusbord',   store.statusbord),
@@ -179,6 +239,7 @@ class MainWindow(QMainWindow):
     def _refresh_overview(self) -> None:
         if self._store is None:
             return
+        # reload data and settings from disk
         try:
             from data.processor import (
                 load_system_variables, load_user_variables,
@@ -198,6 +259,25 @@ class MainWindow(QMainWindow):
                 self._planning_tab.load_data(ac_list, df_cal, df_cyc, sys_vars)
         except Exception as exc:
             self._status_bar.showMessage(f'  Refresh error: {exc}')
+
+    # ------------------------------------------------------------------
+    # metadata polling
+    def _render_update_counter(self) -> None:
+        self._update_lbl.setText(f'  Update check #{self._update_check_count}  ')
+
+    def _check_for_updates(self):
+        try:
+            from data.processor import last_meta
+            m = last_meta()
+            if m != self._last_flag:
+                self._last_flag = m
+                # herlaad alles (inclusief planning-tab via _refresh_overview)
+                self._refresh_overview()
+        except Exception:
+            logging.warning('_check_for_updates mislukt', exc_info=True)
+        finally:
+            self._update_check_count += 1
+            self._render_update_counter()
 
     def _reload_data(self) -> None:
         """Herlaad alle data vanuit SQLite (bijv. na een import)."""

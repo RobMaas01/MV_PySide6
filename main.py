@@ -1,6 +1,6 @@
 """
 Entry point voor MV3 (PySide6).
-Start de applicatie, toont het inlogvenster en daarna het hoofdvenster.
+Start de applicatie en toont het hoofdvenster.
 Data wordt geladen in een achtergrond-thread na het openen van het hoofdvenster.
 """
 import sys
@@ -23,22 +23,23 @@ from data.loader import DataLoader
 import data.store as store_module
 
 
+
+
 def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName('MV App')
     app.setQuitOnLastWindowClosed(True)
-    _icon = QIcon(str(Path(__file__).parent / 'assets' / 'NH90.PNG'))
-    app.setWindowIcon(_icon)
+    app.setWindowIcon(QIcon(str(Path(__file__).parent / 'assets' / 'NH90_taskbar.PNG')))
 
     window = MainWindow()
     window.showMaximized()
     window.raise_()
     window.activateWindow()
 
-    loader = DataLoader()
-    loader.finished.connect(window.on_data_loaded)
-    loader.finished.connect(lambda store: setattr(store_module, 'data', store))
-    loader.start()
+    window._initial_loader = DataLoader()
+    window._initial_loader.finished.connect(window.on_data_loaded)
+    window._initial_loader.finished.connect(lambda store: setattr(store_module, 'data', store))
+    window._initial_loader.start()
 
     sys.exit(app.exec())
 

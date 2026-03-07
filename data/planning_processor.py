@@ -44,40 +44,37 @@ def get_planning_inspections(
 ) -> pd.DataFrame:
     """
     Geeft gefilterde inspecties terug voor de Planning-tab.
-    Als geen filters actief zijn, worden alle inspecties getoond.
+    - Kalender: altijd gefilterd op planning_date (als opgegeven).
+    - Cyclus: gefilterd op uren/gebruik als ten minste één waarde is ingevuld;
+      anders worden alle cyclusinspecties voor het geselecteerde aircraft getoond.
     """
-    any_filter = bool(
-        planning_date or planning_hours or
-        any(v is not None for v in flat_usage.values())
-    )
-
     # --- Kalenderinspecties ---
     cal = df_cal.loc[df_cal['Aircraft'] == aircraft].copy()
     cal['Geplande datum_dt'] = pd.to_datetime(
         cal['Geplande datum'], format='%d-%m-%Y', errors='coerce'
     )
-    cal['show'] = False
     if planning_date:
-        cal['show'] = cal['Geplande datum_dt'] < pd.to_datetime(planning_date)
+        cal = cal.loc[cal['Geplande datum_dt'] < pd.to_datetime(planning_date)]
 
     # --- Cyclusinspecties ---
     cyc = df_cyc.loc[df_cyc['Aircraft'] == aircraft].copy()
     cyc['Geplande datum'] = ''
-    cyc['show'] = False
 
-    if planning_hours is not None:
-        cyc['show'] |= (
-            cyc['Kenmerknaam'] == 'FLIGHT_HOURS'
-        ) & (cyc['Rest'] < planning_hours)
-
-    for kenmerk, usage in flat_usage.items():
-        if usage is not None:
-            cyc['show'] |= (cyc['Kenmerknaam'] == kenmerk) & (cyc['Rest'] < usage)
+    has_cycle_filter = planning_hours is not None or any(
+        v is not None for v in flat_usage.values()
+    )
+    if has_cycle_filter:
+        cyc['show'] = False
+        if planning_hours is not None:
+            cyc['show'] |= (
+                cyc['Kenmerknaam'] == 'FLIGHT_HOURS'
+            ) & (cyc['Rest'] < planning_hours)
+        for kenmerk, usage in flat_usage.items():
+            if usage is not None:
+                cyc['show'] |= (cyc['Kenmerknaam'] == kenmerk) & (cyc['Rest'] < usage)
+        cyc = cyc.loc[cyc['show']]
 
     combined = pd.concat([cal, cyc], ignore_index=True)
-
-    if any_filter:
-        combined = combined.loc[combined['show']]
 
     combined['Type'] = combined['PoRef Omschrijving'].apply(
         lambda x: 'Insp' if isinstance(x, str) and x.startswith('I') else 'Vervang'

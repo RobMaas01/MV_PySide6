@@ -3,8 +3,8 @@ Overzichtscherm voor MV3 — 4 tabellen naast elkaar per vliegtuig.
 Linkerkolom: kist-nr, vlieguren, detail-knoppen.
 """
 import pandas as pd
-from PySide6.QtCore import Qt, QEvent, QObject
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtCore import Qt, QEvent, QObject, QSize
+from PySide6.QtGui import QBrush, QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFrame, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QStyledItemDelegate,
@@ -153,6 +153,33 @@ _DLG_ROW_H = 26
 _DLG_HDR_H = 36
 
 
+def _open_df_in_excel(df: pd.DataFrame, title: str, parent) -> None:
+    import os
+    import tempfile
+    try:
+        safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in title)
+        tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', prefix=f'{safe}_', delete=False)
+        tmp.close()
+        df.to_excel(tmp.name, index=False)
+        os.startfile(tmp.name)
+    except Exception as exc:
+        QMessageBox.warning(parent, 'Export error', str(exc))
+
+
+def _excel_icon() -> QIcon:
+    import os, tempfile
+    from PySide6.QtWidgets import QFileIconProvider
+    from PySide6.QtCore import QFileInfo
+    try:
+        tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+        tmp.close()
+        icon = QFileIconProvider().icon(QFileInfo(tmp.name))
+        os.unlink(tmp.name)
+        return icon
+    except Exception:
+        return QIcon()
+
+
 # ---------------------------------------------------------------------------
 # Dialogen
 # ---------------------------------------------------------------------------
@@ -160,11 +187,17 @@ _DLG_HDR_H = 36
 class _InfoDialog(QDialog):
     def __init__(self, title: str, df: pd.DataFrame, col_widths: list, parent=None, width: int = 460):
         super().__init__(parent)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog |
+            Qt.WindowType.WindowTitleHint |
+            Qt.WindowType.WindowCloseButtonHint
+        )
         self.setWindowTitle(title)
         self.setStyleSheet(_DLG_QSS)
         self.setMinimumSize(420, 380)
         self.resize(width, 440)
+        self._df    = df
+        self._title = title
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -184,12 +217,21 @@ class _InfoDialog(QDialog):
             tbl.setRowHeight(r, _DLG_ROW_H)
         layout.addWidget(tbl, stretch=1)
 
-        btn = QPushButton('Close')
-        btn.setStyleSheet(_BTN_QSS)
-        btn.setFixedHeight(32)
-        btn.setFixedWidth(90)
-        btn.clicked.connect(self.accept)
-        layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignRight)
+        btn_row = QHBoxLayout()
+        btn_xls = QPushButton(_excel_icon(), '')
+        btn_xls.setStyleSheet(_BTN_QSS)
+        btn_xls.setFixedSize(36, 32)
+        btn_xls.setIconSize(QSize(24, 24))
+        btn_xls.clicked.connect(lambda: _open_df_in_excel(self._df, self._title, self))
+        btn_row.addWidget(btn_xls)
+        btn_row.addStretch()
+        btn_close = QPushButton('Close')
+        btn_close.setStyleSheet(_BTN_QSS)
+        btn_close.setFixedHeight(32)
+        btn_close.setFixedWidth(90)
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +251,11 @@ class _SpecialsDialog(QDialog):
 
     def __init__(self, aircraft: str, user_vars: dict, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog |
+            Qt.WindowType.WindowTitleHint |
+            Qt.WindowType.WindowCloseButtonHint
+        )
         self.setWindowTitle(f'Specials — {aircraft}')
         self.setStyleSheet(_DLG_QSS)
         self.setMinimumSize(700, 380)
@@ -247,14 +293,21 @@ class _SpecialsDialog(QDialog):
         layout.addWidget(self._tbl, stretch=1)
 
         btns = QHBoxLayout()
+        btn_xls = QPushButton(_excel_icon(), '')
         btn_rst = QPushButton('Reset')
         btn_sav = QPushButton('Save && close')
         self._reset_button = btn_rst
         for b in (btn_rst, btn_sav):
             b.setStyleSheet(_BTN_QSS)
             b.setFixedHeight(28)
+        btn_xls.setStyleSheet(_BTN_QSS)
+        btn_xls.setFixedSize(32, 28)
+        btn_xls.setIconSize(QSize(20, 20))
+        btn_xls.clicked.connect(self._export_excel)
         btn_rst.clicked.connect(lambda checked: self._on_reset())
         btn_sav.clicked.connect(self._save)
+        btns.addWidget(btn_xls)
+        btns.addSpacing(8)
         btns.addWidget(btn_rst)
         btns.addStretch()
         btns.addWidget(btn_sav)
@@ -336,6 +389,15 @@ class _SpecialsDialog(QDialog):
         save_user_variables(self._user_vars)
         self.accept()
 
+    def _export_excel(self):
+        rows = []
+        for r in range(self._tbl.rowCount()):
+            row = {col: (self._tbl.item(r, c).text() if self._tbl.item(r, c) else '')
+                   for c, col in enumerate(self._DATA_COLS)}
+            if any(row.values()):
+                rows.append(row)
+        _open_df_in_excel(pd.DataFrame(rows), f'Specials_{self._aircraft}', self)
+
     def _on_reset(self):
         if not self._is_dirty:
             return
@@ -368,16 +430,22 @@ _TOGGLE_INACTIVE = (
 class _EcuDialog(QDialog):
     def __init__(self, aircraft: str, df_cyc, df_cfg, sys_vars: dict, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog |
+            Qt.WindowType.WindowTitleHint |
+            Qt.WindowType.WindowCloseButtonHint
+        )
         self.setWindowTitle(f'ECU  —  {aircraft}')
         self.setStyleSheet(_DLG_QSS)
         self.setMinimumSize(500, 380)
         self.resize(640, 460)
 
-        self._aircraft = aircraft
-        self._df_cyc   = df_cyc
-        self._df_cfg   = df_cfg
-        self._sys_vars = sys_vars
+        self._aircraft   = aircraft
+        self._df_cyc     = df_cyc
+        self._df_cfg     = df_cfg
+        self._sys_vars   = sys_vars
+        self._current_df = pd.DataFrame()
+        self._current_ecu = '1'
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -403,12 +471,22 @@ class _EcuDialog(QDialog):
         self._tbl_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._tbl_holder, stretch=1)
 
+        btn_row = QHBoxLayout()
+        btn_xls = QPushButton(_excel_icon(), '')
+        btn_xls.setStyleSheet(_BTN_QSS)
+        btn_xls.setFixedSize(36, 32)
+        btn_xls.setIconSize(QSize(24, 24))
+        btn_xls.clicked.connect(lambda: _open_df_in_excel(
+            self._current_df, f'ECU{self._current_ecu}_{self._aircraft}', self))
+        btn_row.addWidget(btn_xls)
+        btn_row.addStretch()
         close_btn = QPushButton('Close')
         close_btn.setStyleSheet(_BTN_QSS)
         close_btn.setFixedHeight(32)
         close_btn.setFixedWidth(90)
         close_btn.clicked.connect(self.accept)
-        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
 
         self._switch('1')
 
@@ -425,6 +503,9 @@ class _EcuDialog(QDialog):
         except Exception:
             traceback.print_exc()
             return
+
+        self._current_df  = df
+        self._current_ecu = ecu_nr
 
         self._title_lbl.setText(f'<b style="font-size:13px">ECU {ecu_nr}  —  {self._aircraft}  —  SN: {sn}</b>')
 
@@ -654,6 +735,7 @@ def _build_ac_section(aircraft: str, df_cal: pd.DataFrame, df_cyc: pd.DataFrame,
 
     # Info-kaart (naam + uren + knoppen)
     h.addWidget(_build_info_card(aircraft, hrs, df_cal, df_cyc, df_cfg, user_vars, sys_vars))
+    _add_div(h)
 
     # Kalender
     df_ac_cal = df_cal[df_cal['Aircraft'] == aircraft]
@@ -710,14 +792,17 @@ def _build_ac_section(aircraft: str, df_cal: pd.DataFrame, df_cyc: pd.DataFrame,
     # Wikkel-widget met marge voor het blok-effect
     wrapper = QWidget()
     wl = QVBoxLayout(wrapper)
-    wl.setContentsMargins(6, 3, 6, 3)
+    wl.setContentsMargins(2, 3, 6, 3)
     wl.setSpacing(0)
     wl.addWidget(block)
     return wrapper
 
 
 def _add_div(layout: QHBoxLayout) -> None:
-    layout.addSpacing(4)
+    sep = QFrame()
+    sep.setFixedWidth(6)
+    sep.setStyleSheet(f'background: {SLATE_900}; border: none;')
+    layout.addWidget(sep)
 
 
 # ---------------------------------------------------------------------------

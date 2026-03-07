@@ -1,6 +1,6 @@
 """
 DataStore voor MV3.
-Laadt alle data eenmalig in RAM na het inloggen.
+Laadt alle data eenmalig in RAM.
 
 Data-bron: lokale SQLite-database (mv_data.db).
 Bij eerste start worden de Excel-bestanden automatisch geïmporteerd
@@ -12,7 +12,6 @@ import logging
 import sys
 from pathlib import Path
 
-import json
 import pandas as pd
 
 log = logging.getLogger(__name__)
@@ -25,23 +24,8 @@ def _base_dir() -> Path:
     return Path(__file__).parent.parent   # MV_PySide6/
 
 
-def _settings_file() -> Path:
-    if getattr(sys, 'frozen', False):
-        return Path(sys.executable).parent / 'settings' / 'app_settings.json'
-    return _base_dir() / 'settings' / 'app_settings.json'
-
-
 def _data_folder() -> Path:
-    """
-    Map met xlsx-bestanden (gebruikt voor eenmalige auto-migratie naar SQLite).
-    Leest 'data_folder' uit app_settings.json; valt terug op data/ in projectroot.
-    """
-    sf = _settings_file()
-    if sf.exists():
-        with open(sf, encoding='utf-8') as f:
-            folder = json.load(f).get('data_folder', '')
-        if folder:
-            return Path(folder)
+    """Map met xlsx-bestanden voor eenmalige auto-migratie naar SQLite."""
     if getattr(sys, 'frozen', False):
         return Path(sys.executable).parent / 'datasource'
     return _base_dir() / 'datasource'
@@ -124,5 +108,5 @@ class DataStore:
         return store
 
 
-# Module-niveau singleton — wordt gezet vanuit main.py na login
+# Module-niveau singleton — wordt gezet vanuit main.py na het laden
 data: DataStore | None = None
