@@ -7,8 +7,8 @@ __pycache__/
 *.pyo
 *.pyd
 
-# SQLite database files
-*.db
+# SQLite database files — mv_data.db wordt WEL meegeleverd (publish + git)
+# Andere db-bestanden uitsluiten
 *.sqlite
 *.sqlite3
 
