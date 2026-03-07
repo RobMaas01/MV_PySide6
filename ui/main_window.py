@@ -111,6 +111,7 @@ class MainWindow(QMainWindow):
         self._settings_tab = SettingsTab()
         self._tabs.addTab(self._settings_tab, 'Settings')
         self._settings_tab.settings_saved.connect(self._refresh_overview)
+        self._settings_tab.import_completed.connect(self._reload_data)
 
         self.setCentralWidget(self._tabs)
 
@@ -197,6 +198,19 @@ class MainWindow(QMainWindow):
                 self._planning_tab.load_data(ac_list, df_cal, df_cyc, sys_vars)
         except Exception as exc:
             self._status_bar.showMessage(f'  Refresh error: {exc}')
+
+    def _reload_data(self) -> None:
+        """Herlaad alle data vanuit SQLite (bijv. na een import)."""
+        from data.loader import DataLoader
+        import data.store as store_module
+
+        self._start_loading()
+        loader = DataLoader()
+        loader.finished.connect(self.on_data_loaded)
+        loader.finished.connect(lambda s: setattr(store_module, 'data', s))
+        loader.start()
+        # Bewaar referentie zodat de thread niet vroegtijdig wordt opgeruimd
+        self._active_loader = loader
 
     def closeEvent(self, event):
         self.window_closed.emit()

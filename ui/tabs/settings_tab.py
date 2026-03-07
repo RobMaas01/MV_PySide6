@@ -10,7 +10,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QFileDialog, QFrame, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from ui.theme import (
@@ -79,7 +79,8 @@ def _lbl(text: str) -> QLabel:
 
 
 class SettingsTab(QWidget):
-    settings_saved = Signal()
+    settings_saved   = Signal()
+    import_completed = Signal()   # emitted na succesvolle data-import
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -190,6 +191,48 @@ class SettingsTab(QWidget):
 
         left_col.addWidget(data_section)
 
+        # -- Sectie: Data importeren -----------------------------------
+        import_section = QFrame()
+        import_section.setObjectName('section')
+        import_section.setStyleSheet(_SECTION_QSS)
+        import_section.setFixedWidth(380)
+
+        vi = QVBoxLayout(import_section)
+        vi.setContentsMargins(18, 14, 18, 18)
+        vi.setSpacing(0)
+
+        title_i = QLabel('Data importeren')
+        title_i.setStyleSheet(
+            f'font-size: 13px; font-weight: bold; color: {WHITE}; background: transparent;'
+        )
+        vi.addWidget(title_i)
+        vi.addSpacing(10)
+
+        div_i = QFrame()
+        div_i.setFixedHeight(1)
+        div_i.setStyleSheet(_DIVIDER_QSS)
+        vi.addWidget(div_i)
+        vi.addSpacing(12)
+
+        vi.addWidget(_lbl('Importeer statusbord.xlsx naar de lokale database'))
+        vi.addSpacing(8)
+
+        self._import_btn = QPushButton('Statusbord importeren')
+        self._import_btn.setStyleSheet(BTN_PRIMARY_QSS)
+        self._import_btn.setFixedHeight(32)
+        self._import_btn.clicked.connect(self._import_statusbord)
+        vi.addWidget(self._import_btn)
+        vi.addSpacing(8)
+
+        self._import_status = QLabel('')
+        self._import_status.setStyleSheet(
+            f'font-size: 11px; color: {_GREEN}; background: transparent;'
+        )
+        self._import_status.setWordWrap(True)
+        vi.addWidget(self._import_status)
+
+        left_col.addWidget(import_section)
+
         # -- Opslaan ---------------------------------------------------
         btn = QPushButton('Opslaan')
         btn.setStyleSheet(BTN_PRIMARY_QSS)
@@ -297,6 +340,60 @@ class SettingsTab(QWidget):
 
         scroll.setWidget(content)
         outer.addWidget(scroll)
+
+    def _import_statusbord(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Selecteer statusbord.xlsx', '', 'Excel bestanden (*.xlsx *.xls)'
+        )
+        if not path:
+            return
+
+        from pathlib import Path
+        from data.database import import_statusbord
+
+        self._import_btn.setEnabled(False)
+        self._import_status.setStyleSheet(
+            f'font-size: 11px; color: #94a3b8; background: transparent;'
+        )
+        self._import_status.setText('Bezig met importeren...')
+
+        result = import_statusbord(Path(path))
+
+        self._import_btn.setEnabled(True)
+
+        if result['error']:
+            self._import_status.setStyleSheet(
+                'font-size: 11px; color: #f87171; background: transparent;'
+            )
+            self._import_status.setText(f'Fout: {result["error"]}')
+            QMessageBox.warning(
+                self, 'Import mislukt',
+                f'Statusbord kon niet worden geïmporteerd:\n\n{result["error"]}'
+            )
+            return
+
+        rows     = result['rows']
+        previous = result.get('previous', 0)
+        self._import_status.setStyleSheet(
+            f'font-size: 11px; color: {_GREEN}; background: transparent;'
+        )
+        if previous == 0:
+            self._import_status.setText(
+                f'v  {rows:,} regels geïmporteerd'
+            )
+        else:
+            self._import_status.setText(
+                f'v  {rows:,} regels geïmporteerd  (was {previous:,})'
+            )
+
+        QMessageBox.information(
+            self, 'Import geslaagd',
+            f'Statusbord succesvol geïmporteerd.\n\n'
+            f'Geïmporteerd: {rows:,} regels\n'
+            f'Vorige stand: {previous:,} regels\n\n'
+            f'De schermen worden nu bijgewerkt.'
+        )
+        self.import_completed.emit()
 
     def _browse_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, 'Select folder with xlsx files')

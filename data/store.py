@@ -1,13 +1,18 @@
 """
 DataStore voor MV3.
-Laadt alle Excel-data eenmalig in RAM na het inloggen.
+Laadt alle data eenmalig in RAM na het inloggen.
+
+Data-bron: lokale SQLite-database (mv_data.db).
+Bij eerste start worden de Excel-bestanden automatisch geïmporteerd
+in SQLite (eenmalige migratie). Daarna leest de app uitsluitend uit SQLite.
+
 Tabs lezen uit store.data.<naam> — geen directe bestandstoegang vanuit de UI.
 """
-import json
 import logging
 import sys
 from pathlib import Path
 
+import json
 import pandas as pd
 
 log = logging.getLogger(__name__)
@@ -21,7 +26,6 @@ def _base_dir() -> Path:
 
 
 def _settings_file() -> Path:
-    """app_settings.json in settings/ naast de EXE (frozen) of in settings/ (dev)."""
     if getattr(sys, 'frozen', False):
         return Path(sys.executable).parent / 'settings' / 'app_settings.json'
     return _base_dir() / 'settings' / 'app_settings.json'
@@ -29,7 +33,7 @@ def _settings_file() -> Path:
 
 def _data_folder() -> Path:
     """
-    Map met xlsx-bestanden.
+    Map met xlsx-bestanden (gebruikt voor eenmalige auto-migratie naar SQLite).
     Leest 'data_folder' uit app_settings.json; valt terug op data/ in projectroot.
     """
     sf = _settings_file()
@@ -41,6 +45,24 @@ def _data_folder() -> Path:
     if getattr(sys, 'frozen', False):
         return Path(sys.executable).parent / 'data'
     return _base_dir() / 'data'
+
+
+# ---------------------------------------------------------------------------
+# Bronnen: (attr, tabel, excel-pad, excel-kwargs)
+# ---------------------------------------------------------------------------
+
+def _sources(folder: Path) -> list[tuple]:
+    return [
+        ('statusbord',   'statusbord',   folder / 'statusbord.xlsx',
+         {'converters': {'CyclusPOpakk': str}}),
+        ('configuratie', 'configuratie', folder / 'configuratie.xlsx',
+         {'sheet_name': 'Basislijst',
+          'converters': {'Equipment': str, 'Bovenligg.equipment': str}}),
+        ('mis',          'mis',          folder / 'mis.xlsx',
+         {'sheet_name': 'ZZ_MIS'}),
+        ('three_ms',     '3ms',          folder / '3ms.xlsx',
+         {}),
+    ]
 
 
 class DataStore:
@@ -59,33 +81,47 @@ class DataStore:
 
     @classmethod
     def load(cls) -> 'DataStore':
-        """Laad alle bronnen en retourneer een gevulde DataStore."""
+        """
+        Laad alle databronnen vanuit SQLite.
+        Als een tabel nog niet in SQLite staat, wordt het bijbehorende
+        Excel-bestand automatisch geïmporteerd (eenmalige migratie).
+        """
+        from data.database import table_exists, load_table, import_excel_to_table
+
         store  = cls()
         folder = _data_folder()
 
-        store.statusbord   = store._load_excel(folder / 'statusbord.xlsx',   'statusbord',
-                                               converters={'CyclusPOpakk': str})
-        store.configuratie = store._load_excel(folder / 'configuratie.xlsx', 'configuratie',
-                                               sheet_name='Basislijst',
-                                               converters={'Equipment': str, 'Bovenligg.equipment': str})
-        store.mis          = store._load_excel(folder / 'mis.xlsx',          'mis',
-                                               sheet_name='ZZ_MIS')
-        store.three_ms     = store._load_excel(folder / '3ms.xlsx',          '3ms')
+        for attr, table, excel_path, excel_kwargs in _sources(folder):
+            if not table_exists(table):
+                # Tabel bestaat nog niet → probeer auto-import vanuit Excel
+                if excel_path.exists():
+                    n, err = import_excel_to_table(excel_path, table, **excel_kwargs)
+                    if err:
+                        store.load_errors[table] = f'Auto-import mislukt: {err}'
+                        log.warning('  x %s: %s', table, err)
+                        continue
+                    log.info('  ↑ Auto-migratie: %s → SQLite (%d rijen)', table, n)
+                else:
+                    store.load_errors[table] = (
+                        'Niet in SQLite en Excel niet gevonden: '
+                        + str(excel_path)
+                    )
+                    log.warning('  x %s: geen SQLite-data en Excel niet gevonden', table)
+                    continue
 
-        ok  = [k for k in ('statusbord', 'configuratie', 'mis', '3ms') if k not in store.load_errors]
+            df = load_table(table)
+            if df is not None:
+                setattr(store, attr, df)
+                log.info('  v %s  (%d rijen)', table, len(df))
+            else:
+                store.load_errors[table] = 'Laden uit SQLite mislukt'
+                log.warning('  x %s: SQLite-laden mislukt', table)
+
+        ok  = [k for k in ('statusbord', 'configuratie', 'mis', '3ms')
+               if k not in store.load_errors]
         err = list(store.load_errors.keys())
         log.info('DataStore geladen — OK: %s  Fouten: %s', ok, err)
         return store
-
-    def _load_excel(self, path: Path, key: str, **kwargs) -> pd.DataFrame | None:
-        try:
-            df = pd.read_excel(path, **kwargs)
-            log.info('  v %s  (%d rijen)', key, len(df))
-            return df
-        except Exception as exc:
-            self.load_errors[key] = str(exc)
-            log.warning('  x %s: %s', key, exc)
-            return None
 
 
 # Module-niveau singleton — wordt gezet vanuit main.py na login
