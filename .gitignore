@@ -1,0 +1,31 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# SQLite database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Excel data files (runtime data, niet in git)
+data/*.xlsx
+data/*.xls
+
+# Settings/user data
+settings/
+
+# Export output
+export/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.pyc
