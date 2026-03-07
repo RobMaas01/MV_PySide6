@@ -23,9 +23,14 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def db_path() -> Path:
-    """mv_data.db naast de EXE (frozen) of in de projectroot (dev)."""
+    """
+    Frozen: <exe_dir>/data/mv_data.db  (naast settings/, blijft staan bij update)
+    Dev:    <projectroot>/mv_data.db
+    """
     if getattr(sys, 'frozen', False):
-        return Path(sys.executable).parent / 'mv_data.db'
+        p = Path(sys.executable).parent / 'data'
+        p.mkdir(exist_ok=True)
+        return p / 'mv_data.db'
     return Path(__file__).parent.parent / 'mv_data.db'
 
 
