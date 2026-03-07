@@ -4,7 +4,7 @@ en beoogd gebruik.
 """
 import pandas as pd
 from PySide6.QtCore import (
-    Qt, QDate, QTimer, Signal,
+    Qt, QDate, QSize, QTimer, Signal,
     QAbstractTableModel, QModelIndex, QSortFilterProxyModel, QPoint, QRect,
 )
 from PySide6.QtGui import QBrush, QColor, QFontMetrics, QIcon, QPainter, QPixmap, QPolygon
@@ -552,10 +552,22 @@ class PlanningTab(QWidget):
         # verbinding na proxy-aanmaak
         ib.addWidget(self._btn_clear_filter)
         ib.addStretch()
-        self._btn_export = QPushButton('Export to Excel')
+        self._btn_export = QPushButton('')
         self._btn_export.setStyleSheet(_EXPORT_BTN_QSS)
+        self._btn_export.setFixedSize(40, 32)
         self._btn_export.setEnabled(False)
         self._btn_export.clicked.connect(self._export_xls)
+        try:
+            import tempfile, os
+            from PySide6.QtWidgets import QFileIconProvider
+            from PySide6.QtCore import QFileInfo
+            _t = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+            _t.close()
+            self._btn_export.setIcon(QFileIconProvider().icon(QFileInfo(_t.name)))
+            self._btn_export.setIconSize(QSize(26, 26))
+            os.unlink(_t.name)
+        except Exception:
+            pass
         ib.addWidget(self._btn_export)
         # Table
         self._model = PlanningTableModel(self)
