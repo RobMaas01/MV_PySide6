@@ -1,7 +1,7 @@
 """
 Entry point voor MV3 (PySide6).
-Start de applicatie en toont het hoofdvenster.
-Data wordt geladen in een achtergrond-thread na het openen van het hoofdvenster.
+Start de applicatie, opent het hoofdvenster en laadt alle data in een achtergrond-thread.
+Het geladen DataStore-object wordt daarna beschikbaar gemaakt voor de UI-tabbladen.
 """
 import sys
 import ctypes
