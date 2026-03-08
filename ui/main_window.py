@@ -13,7 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QCursor, QIcon
 from PySide6.QtWidgets import (
-    QLabel, QComboBox,
+    QLabel,
     QMainWindow, QStatusBar, QTabWidget,
 )
 
@@ -139,6 +139,7 @@ class MainWindow(QMainWindow):
         self._work_mode = self._load_work_mode()
         self._home_tab = HomeTab(username=self._username, work_mode=self._work_mode)
         self._home_tab.tab_switch_requested.connect(self._tabs.setCurrentIndex)
+        self._home_tab.work_mode_changed.connect(self._on_work_mode_changed)
         self._home_tab.settings_saved.connect(self._refresh_overview)
         self._home_tab.import_completed.connect(self._reload_data)
         self._tabs.addTab(self._home_tab, 'Home')
@@ -179,16 +180,6 @@ class MainWindow(QMainWindow):
         _user_lbl = QLabel(f'  Welcome, {username}   |   Logins: {login_count}  ')
         _user_lbl.setStyleSheet(f'color: {SLATE_400}; font-size: 11px; background: transparent;')
         self._status_bar.addPermanentWidget(_user_lbl)
-
-        self._mode_lbl = QLabel('  Work mode:  ')
-        self._mode_lbl.setStyleSheet(f'color: {SLATE_400}; font-size: 11px; background: transparent;')
-        self._status_bar.addPermanentWidget(self._mode_lbl)
-
-        self._mode_combo = QComboBox()
-        self._mode_combo.addItems(['B1', 'B2', 'B3', 'BVP'])
-        self._mode_combo.setCurrentText(self._work_mode)
-        self._mode_combo.currentTextChanged.connect(self._on_work_mode_changed)
-        self._status_bar.addPermanentWidget(self._mode_combo)
 
         self._update_lbl = QLabel('')
         self._update_lbl.setStyleSheet(f'color: {SLATE_400}; font-size: 11px; background: transparent;')

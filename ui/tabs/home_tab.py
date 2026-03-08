@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
@@ -101,6 +101,7 @@ class HomeTab(QWidget):
     """Welkomstscherm — eerste tab in het hoofdvenster."""
 
     tab_switch_requested = Signal(int)
+    work_mode_changed    = Signal(str)
     settings_saved       = Signal()
     import_completed     = Signal()
 
@@ -236,6 +237,21 @@ class HomeTab(QWidget):
         lbl_hs.setWordWrap(True)
         vh.addWidget(lbl_h)
         vh.addWidget(lbl_hs)
+
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(6)
+        mode_lbl = QLabel('Work mode')
+        mode_lbl.setStyleSheet(
+            f'color: {WHITE}; font-size: 10px; font-weight: bold; background: transparent; border: none;'
+        )
+        self._mode_combo = QComboBox()
+        self._mode_combo.addItems(['B1', 'B2', 'B3', 'BVP'])
+        self._mode_combo.setCurrentText(self._work_mode)
+        self._mode_combo.currentTextChanged.connect(lambda t: self.work_mode_changed.emit(t))
+        mode_row.addWidget(mode_lbl)
+        mode_row.addWidget(self._mode_combo, stretch=1)
+        vh.addLayout(mode_row)
+
         self._ctx_lbl = QLabel('')
         self._ctx_lbl.setStyleSheet(
             f'color: {SLATE_400}; font-size: 10px; background: transparent; border: none;'
@@ -358,6 +374,9 @@ class HomeTab(QWidget):
     def set_context(self, username: str, work_mode: str) -> None:
         self._username = (username or '').strip()
         self._work_mode = str(work_mode or 'B1').upper()
+        self._mode_combo.blockSignals(True)
+        self._mode_combo.setCurrentText(self._work_mode)
+        self._mode_combo.blockSignals(False)
         self._load_helis()
 
     def _load_helis(self) -> None:
