@@ -226,18 +226,6 @@ class HomeTab(QWidget):
         vh.setContentsMargins(14, 12, 14, 12)
         vh.setSpacing(6)
 
-        lbl_h = QLabel('Helicopters in overview')
-        lbl_h.setStyleSheet(
-            f'color: {WHITE}; font-size: 12px; font-weight: bold; background: transparent; border: none;'
-        )
-        lbl_hs = QLabel('Select which aircraft are displayed')
-        lbl_hs.setStyleSheet(
-            f'color: {SLATE_400}; font-size: 10px; background: transparent; border: none;'
-        )
-        lbl_hs.setWordWrap(True)
-        vh.addWidget(lbl_h)
-        vh.addWidget(lbl_hs)
-
         mode_row = QHBoxLayout()
         mode_row.setSpacing(6)
         mode_lbl = QLabel('Work mode')
@@ -251,6 +239,18 @@ class HomeTab(QWidget):
         mode_row.addWidget(mode_lbl)
         mode_row.addWidget(self._mode_combo, stretch=1)
         vh.addLayout(mode_row)
+
+        lbl_h = QLabel('Helicopters in overview')
+        lbl_h.setStyleSheet(
+            f'color: {WHITE}; font-size: 12px; font-weight: bold; background: transparent; border: none;'
+        )
+        lbl_hs = QLabel('Select which aircraft are displayed')
+        lbl_hs.setStyleSheet(
+            f'color: {SLATE_400}; font-size: 10px; background: transparent; border: none;'
+        )
+        lbl_hs.setWordWrap(True)
+        vh.addWidget(lbl_h)
+        vh.addWidget(lbl_hs)
 
         self._ctx_lbl = QLabel('')
         self._ctx_lbl.setStyleSheet(
