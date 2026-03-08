@@ -5,6 +5,8 @@ Zet ruwe DataStore-DataFrames om naar kant-en-klare weergave-DataFrames.
 import json
 import os
 import sys
+import time
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
@@ -29,14 +31,73 @@ _WORK_MODE_ALIASES = {
 # Paden
 # ---------------------------------------------------------------------------
 
-def _base_dir() -> Path:
-    if getattr(sys, 'frozen', False):
-        return Path(sys._MEIPASS)
-    return Path(__file__).parent.parent
-
-
 def _settings_dir() -> Path:
-    return _base_dir() / 'settings'
+    if getattr(sys, 'frozen', False):
+        # Bij een frozen app is sys._MEIPASS read-only (tijdelijke bundel-map).
+        # Schrijfbare bestanden (settings) staan naast het .exe-bestand.
+        return Path(sys.executable).parent / 'settings'
+    return Path(__file__).parent.parent / 'settings'
+
+
+@contextmanager
+def _user_vars_lock():
+    """Advisory cross-process file-lock op MV_UserVariabelen.json.
+
+    Gebruikt een .lock-bestand voor synchronisatie tussen meerdere instanties.
+    Stale locks (ouder dan 5 s) worden automatisch verwijderd.
+    """
+    lock_path = _settings_dir() / 'MV_UserVariabelen.lock'
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            with open(lock_path, 'x'):
+                pass
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                try:
+                    lock_path.unlink()
+                except OSError:
+                    pass
+            else:
+                time.sleep(0.05)
+    try:
+        yield
+    finally:
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Schrijft `data` atomisch naar `path` via een tijdelijk bestand."""
+    tmp = path.with_suffix('.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def modify_user_variables(fn) -> None:
+    """Leest user vars, past fn(user_vars) toe, schrijft atomisch terug — met file-lock.
+
+    Vervangt het patroon:
+        user_vars = load_user_variables()
+        ... muteer ...
+        save_user_variables(user_vars)
+
+    De lock omspant zowel het lezen als het schrijven zodat gelijktijdige
+    schrijfacties van meerdere gebruikers elkaar niet overschrijven.
+    """
+    path = _settings_dir() / 'MV_UserVariabelen.json'
+    with _user_vars_lock():
+        try:
+            with open(path, encoding='utf-8') as f:
+                user_vars = json.load(f)
+        except Exception:
+            user_vars = {}
+        fn(user_vars)
+        _atomic_write_json(path, user_vars)
 
 
 def load_user_variables() -> dict:
@@ -298,15 +359,16 @@ def get_ecu_serienumber(aircraft: str, ecu_nr: str, df_cfg: pd.DataFrame) -> str
 
 
 def save_user_variables(user_vars: dict) -> None:
-    """Slaat user variabelen op naar MV_UserVariabelen.json.
+    """Slaat user variabelen atomisch op naar MV_UserVariabelen.json.
 
     Raakt last_change.txt NIET aan — gebruikersinstellingen (heli-selectie,
     bijzonderheden, completed-inspections) zijn lokaal en triggeren geen
     overview-refresh bij andere gebruikers.
+
+    Gebruik bij voorkeur modify_user_variables() voor een volledig
+    gesynchroniseerde read-modify-write operatie.
     """
-    path = _settings_dir() / 'MV_UserVariabelen.json'
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(user_vars, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(_settings_dir() / 'MV_UserVariabelen.json', user_vars)
 
 
 # ---------------------------------------------------------------------------

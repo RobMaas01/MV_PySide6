@@ -3,7 +3,6 @@ Hoofdvenster voor MV3 (PySide6).
 Navigatie als tabbalk bovenaan â€” geen zijbalk.
 Content neemt de volledige breedte in.
 """
-import json
 import logging
 import os
 import sys
@@ -77,31 +76,24 @@ def _track_login() -> tuple[str, int]:
     Lees Windows-gebruikersnaam, verhoog de login-teller in MV_UserVariabelen.json
     en geef (username, count) terug.
     """
+    from data.processor import modify_user_variables
+
     username = os.environ.get('USERNAME') or os.environ.get('USER') or ''
+    result = [1]
 
-    if getattr(sys, 'frozen', False):
-        uv_file = Path(sys.executable).parent / 'settings' / 'MV_UserVariabelen.json'
-    else:
-        uv_file = Path(__file__).parent.parent / 'settings' / 'MV_UserVariabelen.json'
-
-    try:
-        with open(uv_file, encoding='utf-8') as f:
-            data = json.load(f)
-    except Exception:
-        return username, 1
-
-    logins = data.setdefault('logins', {})
-    entry  = logins.setdefault(username, {'count': 0, 'last': ''})
-    entry['count'] += 1
-    entry['last']   = datetime.now().strftime('%d/%m/%Y %H:%M')
+    def _apply(data: dict) -> None:
+        logins = data.setdefault('logins', {})
+        entry = logins.setdefault(username, {'count': 0, 'last': ''})
+        entry['count'] += 1
+        entry['last'] = datetime.now().strftime('%d/%m/%Y %H:%M')
+        result[0] = entry['count']
 
     try:
-        with open(uv_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        modify_user_variables(_apply)
     except Exception:
         pass
 
-    return username, entry['count']
+    return username, result[0]
 
 
 class MainWindow(QMainWindow):

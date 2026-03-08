@@ -447,7 +447,7 @@ class _SpecialsDialog(QDialog):
             self._tbl.blockSignals(False)
 
     def _save(self):
-        from data.processor import save_user_variables, load_user_variables
+        from data.processor import load_user_variables, modify_user_variables
         bijz = {}
         idx = 0
         for r in range(self._tbl.rowCount()):
@@ -459,18 +459,17 @@ class _SpecialsDialog(QDialog):
                 bijz[str(idx)] = item
                 idx += 1
 
-        # Herlaad de laatste versie van schijf zodat andere vliegtuigen niet overschreven worden
+        # Conflict-check buiten de lock (toont dialoog — mag niet blokkeren).
         try:
-            current = load_user_variables()
+            pre_check = load_user_variables()
         except Exception:
-            current = self._user_vars
+            pre_check = self._user_vars
 
-        # Detecteer conflict: zijn de specials van dit vliegtuig gewijzigd door iemand anders?
         original_bijz = (self._user_vars
                          .get('helikopter', {})
                          .get(self._aircraft, {})
                          .get('InspBijzonderheden', {}))
-        current_bijz  = (current
+        current_bijz  = (pre_check
                          .get('helikopter', {})
                          .get(self._aircraft, {})
                          .get('InspBijzonderheden', {}))
@@ -484,12 +483,16 @@ class _SpecialsDialog(QDialog):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        # Schrijf alleen de specials van dit vliegtuig in de vers herladen data
-        (current
-         .setdefault('helikopter', {})
-         .setdefault(self._aircraft, {})
-         )['InspBijzonderheden'] = bijz
-        save_user_variables(current)
+        # Schrijf alleen de specials van dit vliegtuig atomisch terug.
+        aircraft = self._aircraft
+
+        def _apply(current: dict) -> None:
+            (current
+             .setdefault('helikopter', {})
+             .setdefault(aircraft, {})
+             )['InspBijzonderheden'] = bijz
+
+        modify_user_variables(_apply)
         self.accept()
 
     def _export_excel(self):
@@ -1023,24 +1026,27 @@ class OverviewTab(QWidget):
         layout.addWidget(scroll)
 
     def _save_overview_state(self, row_key: str, mark_done: bool) -> None:
-        from data.processor import load_user_variables, save_user_variables
-        try:
-            current = load_user_variables()
-        except Exception:
-            current = {}
-        ov = current.setdefault('overview', {})
-        raw_done = ov.get('completed_inspections', [])
-        done_set = set(raw_done if isinstance(raw_done, list) else [])
-        if mark_done:
-            done_set.add(row_key)
-        else:
-            done_set.discard(row_key)
-        ov['completed_inspections'] = sorted(done_set)
-        ov['statusbord_fingerprint'] = self._statusbord_fp
-        save_user_variables(current)
+        from data.processor import modify_user_variables
+        fp = self._statusbord_fp
+        captured: list[set] = []
+
+        def _apply(current: dict) -> None:
+            ov = current.setdefault('overview', {})
+            raw_done = ov.get('completed_inspections', [])
+            done_set = set(raw_done if isinstance(raw_done, list) else [])
+            if mark_done:
+                done_set.add(row_key)
+            else:
+                done_set.discard(row_key)
+            ov['completed_inspections'] = sorted(done_set)
+            ov['statusbord_fingerprint'] = fp
+            captured.append(done_set)
+
+        modify_user_variables(_apply)
         # In-place update zodat tabel-closures dezelfde set-referentie blijven lezen.
-        self._completed_keys.clear()
-        self._completed_keys.update(done_set)
+        if captured:
+            self._completed_keys.clear()
+            self._completed_keys.update(captured[0])
 
     def _paint_inspection_row(self, tbl: QTableWidget, row: int, mark_done: bool) -> None:
         bg = QColor(DONE_BG if row % 2 == 0 else DONE_ALT) if mark_done else QColor(TBL_BG if row % 2 == 0 else TBL_ALT)
@@ -1100,9 +1106,7 @@ class OverviewTab(QWidget):
                   df_sb=None, df_cal=None, df_cyc=None,
                   df_cfg=None, statusbord_fp: str | None = None,
                   hide_completed: bool = False) -> None:
-        from data.processor import (
-            get_aircraft_list, save_user_variables,
-        )
+        from data.processor import get_aircraft_list
 
         if store.statusbord is None:
             return
@@ -1136,9 +1140,17 @@ class OverviewTab(QWidget):
             ov['statusbord_fingerprint'] = self._statusbord_fp
             changed = True
         if changed:
-            ov['completed_inspections'] = sorted(done_set)
+            new_fp   = self._statusbord_fp
+            new_done = sorted(done_set)
             try:
-                save_user_variables(user_vars)
+                from data.processor import modify_user_variables
+
+                def _apply(uv: dict) -> None:
+                    ov2 = uv.setdefault('overview', {})
+                    ov2['completed_inspections'] = new_done
+                    ov2['statusbord_fingerprint'] = new_fp
+
+                modify_user_variables(_apply)
             except Exception:
                 pass
         self._completed_keys = done_set

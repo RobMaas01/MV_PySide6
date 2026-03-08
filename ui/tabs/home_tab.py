@@ -1,7 +1,6 @@
 ﻿"""
 Home-tab: welkomstscherm met overzichtskaarten en helikopter-selectie.
 """
-import json
 import logging
 from datetime import date
 from pathlib import Path
@@ -16,8 +15,7 @@ from PySide6.QtWidgets import (
 
 from ui.theme import SLATE_400, SLATE_700, WHITE
 
-_ICON_PATH   = Path(__file__).parent.parent.parent / 'assets' / 'NH90_Main.PNG'
-_UV_FILE     = Path(__file__).parent.parent.parent / 'settings' / 'MV_UserVariabelen.json'
+_ICON_PATH = Path(__file__).parent.parent.parent / 'assets' / 'NH90_Main.PNG'
 
 _CB_QSS = f"""
     QCheckBox {{
@@ -268,18 +266,20 @@ class HomeTab(QWidget):
         grid.setSpacing(3)
         grid.setContentsMargins(0, 2, 0, 0)
 
-        if _UV_FILE.exists():
-            with open(_UV_FILE, encoding='utf-8') as _f:
-                _uv = json.load(_f)
+        try:
+            from data.processor import load_user_variables
+            _uv = load_user_variables()
             helis = sorted(_uv.get('helikopter', {}).keys())
-            n_cols = 2
-            n_rows = -(-len(helis) // n_cols)
-            for i, name in enumerate(helis):
-                cb = QCheckBox(name)
-                cb.setStyleSheet(_CB_QSS)
-                cb.stateChanged.connect(self._on_selection_changed)
-                self._heli_checkboxes[name] = cb
-                grid.addWidget(cb, i % n_rows, i // n_rows)
+        except Exception:
+            helis = []
+        n_cols = 2
+        n_rows = max(1, -(-len(helis) // n_cols))
+        for i, name in enumerate(helis):
+            cb = QCheckBox(name)
+            cb.setStyleSheet(_CB_QSS)
+            cb.stateChanged.connect(self._on_selection_changed)
+            self._heli_checkboxes[name] = cb
+            grid.addWidget(cb, i % n_rows, i // n_rows)
 
         vh.addLayout(grid)
 
@@ -517,7 +517,7 @@ class HomeTab(QWidget):
         self._load_helis()
 
     def _load_helis(self) -> None:
-        if not _UV_FILE.exists() or not self._heli_checkboxes:
+        if not self._heli_checkboxes:
             return
         if self._state_service is not None:
             selected = set(self._state_service.get_selected_aircraft(
