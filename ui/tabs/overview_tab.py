@@ -3,6 +3,7 @@ Overzichtscherm voor MV3 — 4 tabellen naast elkaar per vliegtuig.
 Linkerkolom: kist-nr, vlieguren, detail-knoppen.
 """
 import pandas as pd
+import hashlib
 from PySide6.QtCore import Qt, QEvent, QObject, QSize
 from PySide6.QtGui import QBrush, QColor, QFont, QIcon
 from PySide6.QtWidgets import (
@@ -48,6 +49,9 @@ TBL_TEXT     = '#1e293b'
 TBL_BDR      = '#c8d4e8'
 NEG_BG       = '#f4a0a0'   # zacht rood
 NEG_FG       = '#1e293b'   # zwart
+DONE_BG      = '#d8dee6'   # grijs (uitgevoerde inspectie)
+DONE_ALT     = '#cfd6df'   # grijs alternerend
+DONE_FG      = '#5f6b7a'   # gedempte tekst
 
 INFO_W       = 88       # breedte info-kaart
 POPLAN_W     = 48       # breedte Po Plan-kolom
@@ -220,6 +224,35 @@ def _excel_icon() -> QIcon:
         return icon
     except Exception:
         return QIcon()
+
+
+def _statusbord_fingerprint(df_sb: pd.DataFrame) -> str:
+    """Maak een stabiele fingerprint van statusbord-inhoud."""
+    if df_sb is None or df_sb.empty:
+        return 'empty'
+    norm = df_sb.fillna('').astype(str).copy()
+    cols = sorted(norm.columns.tolist())
+    norm = norm[cols].sort_values(by=cols, kind='mergesort').reset_index(drop=True)
+    row_hash = pd.util.hash_pandas_object(norm, index=False).values.tobytes()
+    h = hashlib.sha1()
+    h.update('|'.join(cols).encode('utf-8'))
+    h.update(row_hash)
+    return h.hexdigest()
+
+
+def _inspection_row_key(kind: str, row: pd.Series) -> str:
+    """Unieke sleutel voor een inspectieregel (zonder Rest, die fluctueert)."""
+    parts = [
+        kind,
+        str(row.get('Aircraft', '')),
+        str(row.get('Equipment', '')),
+        str(row.get('Functieplaats', '')),
+        str(row.get('POplan', row.get('PoPlan', ''))),
+        str(row.get('PoRef', '')),
+        str(row.get('PoRef Omschrijving', '')),
+        str(row.get('Kenmerknaam', '')),
+    ]
+    return '|'.join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -629,7 +662,10 @@ class _EcuDialog(QDialog):
 
 def _build_table(df: pd.DataFrame, columns: list, headers: list,
                  col_widths: list, rest_col: str | None,
-                 max_rows: int = N_ROWS, max_stretch: int = 0) -> QTableWidget:
+                 max_rows: int = N_ROWS, max_stretch: int = 0,
+                 row_keys: list[str] | None = None,
+                 completed_keys: set[str] | None = None,
+                 on_row_clicked=None) -> QTableWidget:
     rows = min(len(df), max_rows)
     tbl  = QTableWidget(rows, len(columns))
     tbl.setHorizontalHeaderLabels(headers)
@@ -676,13 +712,19 @@ def _build_table(df: pd.DataFrame, columns: list, headers: list,
         tbl.installEventFilter(tbl._stretch_cap)
 
     row_bg = [QColor(TBL_BG), QColor(TBL_ALT)]
+    done_bg = [QColor(DONE_BG), QColor(DONE_ALT)]
     for r, (_, row) in enumerate(df.head(max_rows).iterrows()):
         tbl.setRowHeight(r, ROW_H)
+        row_key = row_keys[r] if row_keys and r < len(row_keys) else ''
+        is_done = bool(row_key and completed_keys and row_key in completed_keys)
         for c, col in enumerate(columns):
             val  = row.get(col, '')
             text = '' if pd.isna(val) else str(val)
             item = QTableWidgetItem(text)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            item.setData(Qt.ItemDataRole.UserRole, row_key)
+            if is_done:
+                item.setForeground(QBrush(QColor(DONE_FG)))
             if col == rest_col:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 cell_neg = False
@@ -690,14 +732,29 @@ def _build_table(df: pd.DataFrame, columns: list, headers: list,
                     cell_neg = float(str(val)) < 0
                 except (ValueError, TypeError):
                     pass
-                if cell_neg:
+                if is_done:
+                    item.setBackground(QBrush(done_bg[r % 2]))
+                elif cell_neg:
                     item.setForeground(QBrush(QColor(NEG_FG)))
                     item.setBackground(QBrush(QColor(NEG_BG)))
                 else:
                     item.setBackground(QBrush(row_bg[r % 2]))
             else:
-                item.setBackground(QBrush(row_bg[r % 2]))
+                item.setBackground(QBrush(done_bg[r % 2] if is_done else row_bg[r % 2]))
             tbl.setItem(r, c, item)
+
+    if on_row_clicked is not None:
+        def _clicked(row: int, _col: int):
+            it = tbl.item(row, 0)
+            if it is None:
+                return
+            key = it.data(Qt.ItemDataRole.UserRole) or ''
+            if not key:
+                return
+            done = bool(completed_keys and key in completed_keys)
+            on_row_clicked(key, done)
+        tbl.cellDoubleClicked.connect(_clicked)
+
     return tbl
 
 
@@ -812,7 +869,9 @@ def _build_info_card(aircraft: str, hrs: float,
 
 def _build_ac_section(aircraft: str, df_cal: pd.DataFrame, df_cyc: pd.DataFrame,
                        df_cfg, user_vars: dict, sys_vars: dict,
-                       fh_poref: str) -> QWidget:
+                       fh_poref: str,
+                       completed_keys: set[str] | None = None,
+                       on_inspection_clicked=None) -> QWidget:
     from data.processor import get_ac_hrs, get_bijzonderheden
 
     hrs = get_ac_hrs(df_cyc, aircraft, fh_poref)
@@ -843,12 +902,16 @@ def _build_ac_section(aircraft: str, df_cal: pd.DataFrame, df_cyc: pd.DataFrame,
 
     # Kalender
     df_ac_cal = df_cal[df_cal['Aircraft'] == aircraft]
+    cal_keys = [_inspection_row_key('cal', row) for _, row in df_ac_cal.head(N_ROWS).iterrows()]
     h.addWidget(_build_table(
         df_ac_cal,
         ['POplan', 'PoRef', 'PoRef Omschrijving', 'Rest'],
         ['Po Plan', 'Po Ref', 'Omschrijving', 'Rest\ndag'],
         [('F', POPLAN_W), ('F', POREF_W), ('S', 0), ('F', 46)],
         rest_col='Rest', max_stretch=OMSCHR_MAX,
+        row_keys=cal_keys,
+        completed_keys=completed_keys,
+        on_row_clicked=on_inspection_clicked,
     ), stretch=3)
     _add_div(h)
 
@@ -857,12 +920,16 @@ def _build_ac_section(aircraft: str, df_cal: pd.DataFrame, df_cyc: pd.DataFrame,
         (df_cyc['Aircraft'] == aircraft) &
         df_cyc['Kenmerknaam'].str.contains('HOURS', na=False)
     ]
+    hrs_keys = [_inspection_row_key('hrs', row) for _, row in df_ac_hrs.head(N_ROWS).iterrows()]
     h.addWidget(_build_table(
         df_ac_hrs,
         ['POplan', 'PoRef', 'PoRef Omschrijving', 'Rest'],
         ['Po Plan', 'Po Ref', 'Omschrijving', 'Rest\nUren'],
         [('F', POPLAN_W), ('F', POREF_W), ('S', 0), ('F', 46)],
         rest_col='Rest', max_stretch=OMSCHR_MAX,
+        row_keys=hrs_keys,
+        completed_keys=completed_keys,
+        on_row_clicked=on_inspection_clicked,
     ), stretch=3)
     _add_div(h)
 
@@ -872,12 +939,16 @@ def _build_ac_section(aircraft: str, df_cal: pd.DataFrame, df_cyc: pd.DataFrame,
         ~df_cyc['Kenmerknaam'].str.contains('HOURS', na=False)
     ].copy()
     df_ac_cyc['Kenmerknaam'] = df_ac_cyc['Kenmerknaam'].str.lower()
+    cyc_keys = [_inspection_row_key('cyc', row) for _, row in df_ac_cyc.head(N_ROWS).iterrows()]
     h.addWidget(_build_table(
         df_ac_cyc,
         ['POplan', 'PoRef', 'PoRef Omschrijving', 'Rest', 'Kenmerknaam'],
         ['Po Plan', 'Po Ref', 'Omschrijving', 'Rest', 'KenmerkNaam'],
         [('F', POPLAN_W), ('F', POREF_W), ('S', 0), ('F', 46), ('F', 102)],
         rest_col='Rest', max_stretch=OMSCHR_MAX,
+        row_keys=cyc_keys,
+        completed_keys=completed_keys,
+        on_row_clicked=on_inspection_clicked,
     ), stretch=4)
     _add_div(h)
 
@@ -916,6 +987,8 @@ def _add_div(layout: QHBoxLayout) -> None:
 class OverviewTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._completed_keys: set[str] = set()
+        self._statusbord_fp: str = ''
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -934,10 +1007,46 @@ class OverviewTab(QWidget):
         scroll.setWidget(self._container)
         layout.addWidget(scroll)
 
+    def _save_overview_state(self) -> None:
+        from data.processor import load_user_variables, save_user_variables
+        try:
+            current = load_user_variables()
+        except Exception:
+            current = {}
+        ov = current.setdefault('overview', {})
+        ov['completed_inspections'] = sorted(self._completed_keys)
+        ov['statusbord_fingerprint'] = self._statusbord_fp
+        save_user_variables(current)
+
+    def _on_inspection_clicked(self, row_key: str, is_done: bool) -> None:
+        if is_done:
+            reply = QMessageBox.question(
+                self,
+                'Reactivate inspection',
+                'This inspection is marked as completed.\nDo you want to set it active again?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            self._completed_keys.discard(row_key)
+        else:
+            self._completed_keys.add(row_key)
+
+        try:
+            self._save_overview_state()
+        except Exception as exc:
+            QMessageBox.warning(self, 'Save failed', str(exc))
+            return
+
+        # Render direct opnieuw met actuele grijs-markering.
+        win = self.window()
+        if hasattr(win, '_refresh_overview'):
+            win._refresh_overview()
+
     def load_data(self, store, sys_vars: dict, user_vars: dict) -> None:
         from data.processor import (
-            get_aircraft_list, get_calendar_inspections,
-            get_cycle_inspections, prepare_configuratie, prepare_statusbord,
+            get_aircraft_list, get_calendar_inspections, get_cycle_inspections,
+            prepare_configuratie, prepare_statusbord, save_user_variables,
         )
 
         if store.statusbord is None:
@@ -947,6 +1056,27 @@ class OverviewTab(QWidget):
         df_cal = get_calendar_inspections(df_sb)
         df_cyc = get_cycle_inspections(df_sb)
         df_cfg = prepare_configuratie(store.configuratie) if store.configuratie is not None else None
+
+        # Laad persisted inspectie-status en schoon op bij nieuw statusbord.
+        self._statusbord_fp = _statusbord_fingerprint(df_sb)
+        ov = user_vars.setdefault('overview', {})
+        stored_fp = str(ov.get('statusbord_fingerprint', ''))
+        raw_done = ov.get('completed_inspections', [])
+        done_set = set(raw_done if isinstance(raw_done, list) else [])
+        changed = False
+        if stored_fp and stored_fp != self._statusbord_fp and done_set:
+            done_set.clear()
+            changed = True
+        if stored_fp != self._statusbord_fp:
+            ov['statusbord_fingerprint'] = self._statusbord_fp
+            changed = True
+        if changed:
+            ov['completed_inspections'] = sorted(done_set)
+            try:
+                save_user_variables(user_vars)
+            except Exception:
+                pass
+        self._completed_keys = done_set
 
         aircraft_list = get_aircraft_list(df_sb, user_vars)
         fh_poref = sys_vars.get('Kenmerken', {}).get('Flight Hrs', [''])[0]
@@ -958,7 +1088,10 @@ class OverviewTab(QWidget):
 
         for ac in aircraft_list:
             section = _build_ac_section(
-                ac, df_cal, df_cyc, df_cfg, user_vars, sys_vars, fh_poref)
+                ac, df_cal, df_cyc, df_cfg, user_vars, sys_vars, fh_poref,
+                completed_keys=self._completed_keys,
+                on_inspection_clicked=self._on_inspection_clicked,
+            )
             self._con_layout.addWidget(section)
 
         self._con_layout.addStretch()
