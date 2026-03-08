@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -110,7 +111,9 @@ class MainWindow(QMainWindow):
         self._check_interval_sec = 2
         self._update_check_count = 1
         self._username = ''
-        self._work_mode = 'B1'
+        self._work_mode = 'Flight MVKK'
+        self._meta_refresh_pending = False
+        self._last_meta_refresh_at = 0.0
         self._meta_timer = QTimer(self)
         self._meta_timer.timeout.connect(self._check_for_updates)
 
@@ -134,6 +137,7 @@ class MainWindow(QMainWindow):
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._tabs.setStyleSheet(_TAB_QSS)
         self._tabs.setDocumentMode(True)
+        self._tabs.currentChanged.connect(self._on_tab_changed)
 
         # Pagina 0: Home
         self._work_mode = self._load_work_mode()
@@ -192,20 +196,13 @@ class MainWindow(QMainWindow):
             uv = load_user_variables()
             return get_work_mode(uv, username=self._username)
         except Exception:
-            return 'B1'
+            return 'Flight MVKK'
 
     def _on_work_mode_changed(self, mode: str) -> None:
-        mode = str(mode).upper()
+        mode = str(mode)
         if mode == self._work_mode:
             return
         self._work_mode = mode
-        try:
-            from data.processor import load_user_variables, save_user_variables, set_work_mode
-            uv = load_user_variables()
-            set_work_mode(uv, self._work_mode, username=self._username)
-            save_user_variables(uv)
-        except Exception as exc:
-            self._status_bar.showMessage(f'  Mode save error: {exc}')
         self._home_tab.set_context(self._username, self._work_mode)
         self._refresh_overview()
 
@@ -270,7 +267,12 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
 
-    def _refresh_overview(self) -> None:
+    def _on_tab_changed(self, idx: int) -> None:
+        # Planning-data wordt lichtgewicht ververst zodra de gebruiker die tab opent.
+        if idx == 2 and self._store is not None:
+            self._refresh_overview(refresh_planning=True)
+
+    def _refresh_overview(self, refresh_planning: bool = True) -> None:
         if self._store is None:
             return
         # reload data and settings from disk
@@ -289,7 +291,7 @@ class MainWindow(QMainWindow):
                 username=self._username, work_mode=self._work_mode
             )
 
-            if self._store.statusbord is not None:
+            if refresh_planning and self._store.statusbord is not None:
                 df_sb   = prepare_statusbord(self._store.statusbord)
                 df_cal  = get_calendar_inspections(df_sb)
                 df_cyc  = get_cycle_inspections(df_sb)
@@ -299,6 +301,23 @@ class MainWindow(QMainWindow):
                 self._planning_tab.load_data(ac_list, df_cal, df_cyc, sys_vars)
         except Exception as exc:
             self._status_bar.showMessage(f'  Refresh error: {exc}')
+
+    def _request_meta_refresh(self) -> None:
+        if self._meta_refresh_pending:
+            return
+        self._meta_refresh_pending = True
+        QTimer.singleShot(120, self._run_meta_refresh)
+
+    def _run_meta_refresh(self) -> None:
+        self._meta_refresh_pending = False
+        now = time.monotonic()
+        # Guard tegen refresh-storms bij veel externe writes.
+        if now - self._last_meta_refresh_at < 0.35:
+            self._request_meta_refresh()
+            return
+        self._last_meta_refresh_at = now
+        refresh_planning = self._tabs.currentIndex() == 2
+        self._refresh_overview(refresh_planning=refresh_planning)
 
     # ------------------------------------------------------------------
     # metadata polling
@@ -311,8 +330,7 @@ class MainWindow(QMainWindow):
             m = last_meta()
             if m != self._last_flag:
                 self._last_flag = m
-                # herlaad alles (inclusief planning-tab via _refresh_overview)
-                self._refresh_overview()
+                self._request_meta_refresh()
         except Exception:
             logging.warning('_check_for_updates mislukt', exc_info=True)
         finally:

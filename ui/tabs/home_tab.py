@@ -105,12 +105,18 @@ class HomeTab(QWidget):
     settings_saved       = Signal()
     import_completed     = Signal()
 
-    def __init__(self, username: str = '', work_mode: str = 'B1', parent=None):
+    def __init__(self, username: str = '', work_mode: str = 'Flight MVKK', parent=None):
         super().__init__(parent)
         self._stat_labels: dict[str, QLabel] = {}
         self._heli_checkboxes: dict[str, QCheckBox] = {}
         self._username = (username or '').strip()
-        self._work_mode = str(work_mode or 'B1').upper()
+        self._work_mode = str(work_mode or 'Flight MVKK')
+        self._suspend_selection_events = False
+        self._dirty = False
+        self._status_clear_token = 0
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._persist_filters)
 
         self.setObjectName('HomeTab')
         self._build_ui()
@@ -228,12 +234,12 @@ class HomeTab(QWidget):
 
         mode_row = QHBoxLayout()
         mode_row.setSpacing(6)
-        mode_lbl = QLabel('Work mode')
+        mode_lbl = QLabel('Location')
         mode_lbl.setStyleSheet(
             f'color: {WHITE}; font-size: 10px; font-weight: bold; background: transparent; border: none;'
         )
         self._mode_combo = QComboBox()
-        self._mode_combo.addItems(['B1', 'B2', 'B3', 'BVP'])
+        self._mode_combo.addItems(['Flight MVKK', 'Out of area 1', 'Out of area 2', 'Out of area 3', 'BVP'])
         self._mode_combo.setCurrentText(self._work_mode)
         self._mode_combo.currentTextChanged.connect(self._on_mode_changed)
         mode_row.addWidget(mode_lbl)
@@ -372,20 +378,47 @@ class HomeTab(QWidget):
     # Helikopter-selectie
     # ------------------------------------------------------------------
 
+    def _set_status(self, text: str = '', ttl_ms: int = 0) -> None:
+        self._status_clear_token += 1
+        token = self._status_clear_token
+        self._heli_status.setText(text)
+        if ttl_ms > 0 and text:
+            QTimer.singleShot(ttl_ms, lambda: self._clear_status_if_current(token))
+
+    def _clear_status_if_current(self, token: int) -> None:
+        if token == self._status_clear_token:
+            self._heli_status.setText('')
+
+    def _mark_dirty(self, schedule_ms: int = 450) -> None:
+        self._dirty = True
+        self._set_status('')
+        self._save_timer.start(schedule_ms)
+
+    def _collect_selected(self) -> list[str]:
+        return [name for name, cb in self._heli_checkboxes.items() if cb.isChecked()]
+
     def _on_selection_changed(self) -> None:
-        self._heli_status.setText('')
+        if self._suspend_selection_events:
+            return
+        self._mark_dirty()
 
     def _on_mode_changed(self, text: str) -> None:
-        self._heli_status.setText('')
+        mode = str(text)
+        if mode == self._work_mode:
+            return
+        self._work_mode = mode
+        # Toon direct de set voor de nieuwe mode in de UI.
+        self._load_helis()
+        self._mark_dirty()
         self.work_mode_changed.emit(text)
 
     def set_context(self, username: str, work_mode: str) -> None:
         self._username = (username or '').strip()
-        self._work_mode = str(work_mode or 'B1').upper()
+        self._work_mode = str(work_mode or 'Flight MVKK')
         self._mode_combo.blockSignals(True)
         self._mode_combo.setCurrentText(self._work_mode)
         self._mode_combo.blockSignals(False)
-        self._heli_status.setText('')
+        self._set_status('')
         self._load_helis()
 
     def _load_helis(self) -> None:
@@ -396,20 +429,38 @@ class HomeTab(QWidget):
         selected = set(get_selected_aircraft(
             uv, username=self._username, work_mode=self._work_mode
         ))
+        self._suspend_selection_events = True
         for name, cb in self._heli_checkboxes.items():
             cb.setChecked(name in selected)
+        self._suspend_selection_events = False
         scope = 'personal' if self._work_mode == 'BVP' else 'shared group'
-        self._ctx_lbl.setText(f'Context: {self._work_mode} ({scope})')
-        self._heli_status.setText('')
+        self._ctx_lbl.setText(f'Location: {self._work_mode} ({scope})')
+        self._set_status('')
 
     def _save_helis(self) -> None:
-        from data.processor import load_user_variables, save_user_variables, set_selected_aircraft
-        uv = load_user_variables()
-        selected = [name for name, cb in self._heli_checkboxes.items() if cb.isChecked()]
-        set_selected_aircraft(uv, selected, username=self._username, work_mode=self._work_mode)
-        save_user_variables(uv)
-        self._heli_status.setText('v  Saved')
-        QTimer.singleShot(2500, lambda: self._heli_status.setText(''))
+        self._save_timer.stop()
+        self._persist_filters(force=True)
+
+    def _persist_filters(self, force: bool = False) -> None:
+        if not force and not self._dirty:
+            return
+        try:
+            from data.processor import (
+                load_user_variables, save_user_variables,
+                set_selected_aircraft, set_work_mode,
+            )
+            uv = load_user_variables()
+            set_work_mode(uv, self._work_mode, username=self._username)
+            selected = self._collect_selected()
+            set_selected_aircraft(uv, selected, username=self._username, work_mode=self._work_mode)
+            save_user_variables(uv)
+        except Exception as exc:
+            self._set_status('x  Save failed')
+            QMessageBox.warning(self, 'Save failed', str(exc))
+            return
+
+        self._dirty = False
+        self._set_status('v  Saved', ttl_ms=2200)
         self.settings_saved.emit()
 
     # ------------------------------------------------------------------

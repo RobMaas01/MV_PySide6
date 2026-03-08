@@ -11,7 +11,18 @@ from pathlib import Path
 import pandas as pd
 
 N_ROWS = 7
-WORK_MODES = ('B1', 'B2', 'B3', 'BVP')
+WORK_MODES = ('Flight MVKK', 'Out of area 1', 'Out of area 2', 'Out of area 3', 'BVP')
+_DEFAULT_WORK_MODE = 'Flight MVKK'
+_WORK_MODE_ALIASES = {
+    'B1': 'Flight MVKK',
+    'B2': 'Out of area 1',
+    'B3': 'Out of area 2',
+    'FLIGHT MVKK': 'Flight MVKK',
+    'OUT OF AREA 1': 'Out of area 1',
+    'OUT OF AREA 2': 'Out of area 2',
+    'OUT OF AREA 3': 'Out of area 3',
+    'BVP': 'BVP',
+}
 
 
 # ---------------------------------------------------------------------------
@@ -55,25 +66,27 @@ def _legacy_selected_aircraft(user_vars: dict) -> list[str]:
 def get_work_mode(user_vars: dict, username: str | None = None) -> str:
     user_key = _normalize_user(username) or get_current_username()
     by_user = user_vars.get('work_mode_by_user', {})
-    mode = str(by_user.get(user_key, 'B1')).upper()
-    return mode if mode in WORK_MODES else 'B1'
+    raw = str(by_user.get(user_key, _DEFAULT_WORK_MODE))
+    mode = _WORK_MODE_ALIASES.get(raw.upper(), raw)
+    return mode if mode in WORK_MODES else _DEFAULT_WORK_MODE
 
 
 def set_work_mode(user_vars: dict, mode: str, username: str | None = None) -> str:
     user_key = _normalize_user(username) or get_current_username()
-    mode_up = str(mode).upper()
-    if mode_up not in WORK_MODES:
-        mode_up = 'B1'
+    raw = str(mode)
+    mode_norm = _WORK_MODE_ALIASES.get(raw.upper(), raw)
+    if mode_norm not in WORK_MODES:
+        mode_norm = _DEFAULT_WORK_MODE
     by_user = user_vars.setdefault('work_mode_by_user', {})
-    by_user[user_key] = mode_up
-    return mode_up
+    by_user[user_key] = mode_norm
+    return mode_norm
 
 
 def get_selected_aircraft(user_vars: dict,
                           username: str | None = None,
                           work_mode: str | None = None) -> list[str]:
     user_key = _normalize_user(username) or get_current_username()
-    mode = (work_mode or get_work_mode(user_vars, user_key)).upper()
+    mode = set_work_mode(user_vars, work_mode or get_work_mode(user_vars, user_key), user_key)
     legacy = _legacy_selected_aircraft(user_vars)
 
     scope = user_vars.setdefault('overview_filters', {})
@@ -88,6 +101,13 @@ def get_selected_aircraft(user_vars: dict,
         return sorted(dict.fromkeys(str(a) for a in selected))
 
     selected = groups.get(mode)
+    # Migratiepad voor oude sleutel-namen
+    if not isinstance(selected, list):
+        legacy_key = {'Flight MVKK': 'B1', 'Out of area 1': 'B2', 'Out of area 2': 'B3'}.get(mode)
+        if legacy_key and isinstance(groups.get(legacy_key), list):
+            selected = list(groups.get(legacy_key))
+            groups[mode] = selected
+            del groups[legacy_key]
     if not isinstance(selected, list):
         selected = list(legacy)
         groups[mode] = selected
@@ -98,7 +118,7 @@ def set_selected_aircraft(user_vars: dict, selected: list[str],
                           username: str | None = None,
                           work_mode: str | None = None) -> None:
     user_key = _normalize_user(username) or get_current_username()
-    mode = (work_mode or get_work_mode(user_vars, user_key)).upper()
+    mode = set_work_mode(user_vars, work_mode or get_work_mode(user_vars, user_key), user_key)
     sel = sorted(dict.fromkeys(str(a) for a in selected))
 
     scope = user_vars.setdefault('overview_filters', {})
