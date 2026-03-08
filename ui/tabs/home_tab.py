@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
-    QMessageBox, QPushButton, QToolButton, QVBoxLayout, QWidget,
+    QDialog, QMessageBox, QPushButton, QToolButton, QVBoxLayout, QWidget,
 )
 
 from ui.theme import SLATE_400, SLATE_700, WHITE
@@ -398,17 +398,72 @@ class HomeTab(QWidget):
     # ------------------------------------------------------------------
 
     def _show_help_popup(self) -> None:
-        QMessageBox.information(
-            self,
-            'Help',
-            'Home panel quick guide:\n\n'
+        dlg = QDialog(self)
+        dlg.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        dlg.setModal(True)
+        dlg.setFixedWidth(560)
+        dlg.setStyleSheet("""
+            QDialog {
+                background: rgba(30, 46, 72, 220);
+                border: 1px solid rgba(164, 204, 240, 210);
+                border-radius: 8px;
+            }
+            QLabel {
+                color: #f8fafc;
+                background: transparent;
+                border: none;
+            }
+        """)
+
+        outer = QVBoxLayout(dlg)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        body = QWidget()
+        body.setObjectName('helpBody')
+        body.setStyleSheet("""
+            QWidget#helpBody {
+                background: rgba(30, 46, 72, 220);
+                border-top: 1px solid rgba(214, 235, 252, 70);
+                border-left: 1px solid rgba(214, 235, 252, 70);
+                border-right: 1px solid rgba(214, 235, 252, 70);
+                border-bottom: 1px solid rgba(214, 235, 252, 70);
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                border-bottom-left-radius: 8px;
+                border-bottom-right-radius: 8px;
+            }
+        """)
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(14, 12, 14, 10)
+        bl.setSpacing(10)
+        txt = QLabel(
             'Import statusboard:\n'
-            'Loads a new statusboard Excel file and refreshes all screens after a successful import.\n\n'
-            'Location:\n'
-            'Choose the active work area. This affects which data and defaults are used.\n\n'
-            'Aircraft checkboxes:\n'
-            'Select which aircraft are visible in Overview.'
+            'Gebruik dit om een nieuwere statusboard Excel-file te laden vanuit Downloads of een andere map.\n'
+            'Het bestand wordt eerst gevalideerd (verplichte kolommen), daarna gekopieerd naar de app-datasource en geïmporteerd.\n'
+            'Na een succesvolle import worden alle schermen ververst met de nieuwe data.\n\n'
+            'Locatie:\n'
+            'Kies het actieve werkgebied. Dit bepaalt welke data en standaardwaarden worden gebruikt.\n'
+            'Als BVP is geselecteerd, wordt deze instelling alleen voor de huidige gebruiker opgeslagen.\n'
+            'Alle andere locaties zijn gedeeld en gelden voor alle gebruikers.\n\n'
+            'Helikopter-selectie:\n'
+            'Selecteer welke helikopters zichtbaar zijn in Overview.'
         )
+        txt.setWordWrap(True)
+        txt.setStyleSheet('font-size: 12px; line-height: 1.35;')
+        bl.addWidget(txt)
+
+        row = QHBoxLayout()
+        row.addStretch()
+        close_btn = QPushButton('Close')
+        close_btn.setStyleSheet(_BTN_QSS)
+        close_btn.setFixedSize(72, 24)
+        close_btn.clicked.connect(dlg.accept)
+        row.addWidget(close_btn)
+        bl.addLayout(row)
+        outer.addWidget(body)
+
+        dlg.exec()
 
     def _set_status(self, text: str = '', ttl_ms: int = 0) -> None:
         self._status_clear_token += 1
