@@ -459,6 +459,10 @@ class PlanningTab(QWidget):
         self._df_cyc:   pd.DataFrame | None = None
         self._sys_vars: dict = {}
         self._df_usage: pd.DataFrame = pd.DataFrame()
+        self._last_col_signature: tuple[str, ...] | None = None
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.timeout.connect(self._do_refresh)
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -656,7 +660,12 @@ class PlanningTab(QWidget):
 
     def load_data(self, aircraft_list: list, df_cal: pd.DataFrame,
                   df_cyc: pd.DataFrame, sys_vars: dict) -> None:
-        self._df_cal   = df_cal
+        # Cache datetime parsing once; avoids repeated parsing on aircraft switch.
+        self._df_cal   = df_cal.copy()
+        if self._df_cal is not None and not self._df_cal.empty and 'Geplande datum_dt' not in self._df_cal.columns:
+            self._df_cal['Geplande datum_dt'] = pd.to_datetime(
+                self._df_cal['Geplande datum'], format='%d-%m-%Y', errors='coerce'
+            )
         self._df_cyc   = df_cyc
         self._sys_vars = sys_vars
         from data.planning_processor import get_usage_items
@@ -666,7 +675,7 @@ class PlanningTab(QWidget):
         self._combo_ac.clear()
         self._combo_ac.addItems(aircraft_list)
         self._combo_ac.blockSignals(False)
-        self._refresh()
+        self._schedule_refresh(0)
 
     # ------------------------------------------------------------------
     # Intended use table
@@ -738,7 +747,7 @@ class PlanningTab(QWidget):
             from data.planning_processor import calculate_usage
             self._df_usage = calculate_usage(self._df_usage, fh, wk)
             self._update_usage_display()
-        self._refresh()
+        self._schedule_refresh(0)
 
     def _on_weeks_changed(self, weeks):
         fh = self._spin_hours.value() if self._spin_hours.value() > 0 else None
@@ -747,16 +756,23 @@ class PlanningTab(QWidget):
             from data.planning_processor import calculate_usage
             self._df_usage = calculate_usage(self._df_usage, fh, wk)
             self._update_usage_display()
-        self._refresh()
+        self._schedule_refresh(0)
 
     def _on_usage_changed(self):
-        self._refresh()
+        self._schedule_refresh(0)
 
     # ------------------------------------------------------------------
     # Refresh / populate
     # ------------------------------------------------------------------
 
+    def _schedule_refresh(self, delay_ms: int = 20):
+        self._refresh_timer.start(max(0, int(delay_ms)))
+
     def _refresh(self):
+        # Backward-compatible wrapper for existing signal connections.
+        self._schedule_refresh(20)
+
+    def _do_refresh(self):
         if self._df_cal is None or self._df_cyc is None:
             return
         aircraft = self._combo_ac.currentText()
@@ -779,7 +795,10 @@ class PlanningTab(QWidget):
             self._lbl_count.setText('No inspections found')
             self._btn_export.setEnabled(False)
             return
-        QTimer.singleShot(0, self._tbl.resizeColumnsToContents)
+        sig = tuple(df.columns)
+        if sig != self._last_col_signature:
+            QTimer.singleShot(0, self._tbl.resizeColumnsToContents)
+            self._last_col_signature = sig
         self._update_count()
         self._btn_export.setEnabled(True)
 

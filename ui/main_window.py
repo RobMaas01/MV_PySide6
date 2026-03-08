@@ -24,6 +24,7 @@ from ui.tabs.home_tab import HomeTab
 from ui.tabs.overview_tab import OverviewTab
 from ui.tabs.planning_tab import PlanningTab
 from ui.tabs.settings_tab import SettingsTab
+from data.app_state_service import AppStateService
 from ui.theme import (
     APP_QSS, BLUE_700,
     SLATE_400, SLATE_600, SLATE_700, SLATE_800, SLATE_900, WHITE,
@@ -126,6 +127,7 @@ class MainWindow(QMainWindow):
         self._last_meta_refresh_at = 0.0
         self._meta_timer = QTimer(self)
         self._meta_timer.timeout.connect(self._check_for_updates)
+        self._state = AppStateService()
 
         self._build_ui()
         self._meta_timer.start(self._check_interval_sec * 1000)   # iedere 5 seconden
@@ -151,13 +153,11 @@ class MainWindow(QMainWindow):
 
         # Corner widget rechts â€” met ~8cm spacing rechts voor zichtbaarheid
         self._hide_cb = QCheckBox('Hide completed inspecties')
-        _check_icon = str(Path(__file__).parent.parent / 'assets' / 'check.svg').replace('\\', '/')
         self._hide_cb.setStyleSheet(f"""
             QCheckBox {{ color: #1a1a1a; font-size: 12px; spacing: 8px; background: transparent; }}
             QCheckBox::indicator {{ width: 13px; height: 13px; border-radius: 3px;
-                border: 1px solid #888; background: #ffffff; }}
-            QCheckBox::indicator:checked {{ background: #ffffff; border: 1px solid #888;
-                image: url({_check_icon}); }}
+                border: 1px solid #7a7a7a; background: #f1f5f9; }}
+            QCheckBox::indicator:checked {{ background: #3b82f6; border: 1px solid #2563eb; }}
         """)
         self._hide_cb.stateChanged.connect(self._on_hide_completed_changed)
         _cb_block = QWidget()
@@ -178,7 +178,11 @@ class MainWindow(QMainWindow):
 
         # Pagina 0: Home
         self._work_mode = self._load_work_mode()
-        self._home_tab = HomeTab(username=self._username, work_mode=self._work_mode)
+        self._home_tab = HomeTab(
+            username=self._username,
+            work_mode=self._work_mode,
+            state_service=self._state,
+        )
         self._home_tab.tab_switch_requested.connect(self._tabs.setCurrentIndex)
         self._home_tab.work_mode_changed.connect(self._on_work_mode_changed)
         self._home_tab.settings_saved.connect(self._refresh_overview)
@@ -229,9 +233,7 @@ class MainWindow(QMainWindow):
 
     def _load_work_mode(self) -> str:
         try:
-            from data.processor import load_user_variables, get_work_mode
-            uv = load_user_variables()
-            return get_work_mode(uv, username=self._username)
+            return self._state.get_work_mode(username=self._username)
         except Exception:
             return 'Flight MVKK'
 
@@ -255,8 +257,7 @@ class MainWindow(QMainWindow):
         self.unsetCursor()
         # stel de vlag in op huidige waarde, zodat we niet reloaden bij start
         try:
-            from data.processor import last_meta
-            self._last_flag = last_meta()
+            self._last_flag = self._state.last_meta()
         except Exception:
             pass
 
@@ -276,13 +277,12 @@ class MainWindow(QMainWindow):
 
         try:
             from data.processor import (
-                load_system_variables, load_user_variables,
                 prepare_statusbord, prepare_configuratie,
                 get_aircraft_list, get_calendar_inspections, get_cycle_inspections,
             )
             from ui.tabs.overview_tab import _statusbord_fingerprint
-            sys_vars  = load_system_variables()
-            user_vars = load_user_variables()
+            sys_vars  = self._state.load_system_variables()
+            user_vars = self._state.load_user_variables()
 
             # Bouw centrale cache op â€” Ã©Ã©nmalige berekening voor alle tabs.
             if store.statusbord is not None:
@@ -301,8 +301,7 @@ class MainWindow(QMainWindow):
                 store, sys_vars, user_vars,
                 df_cal=self._df_cal, df_cyc=self._df_cyc,
             )
-            from data.processor import get_hide_completed
-            _hide = get_hide_completed(user_vars, username=self._username)
+            _hide = self._state.get_hide_completed(username=self._username)
             self._hide_cb.blockSignals(True)
             self._hide_cb.setChecked(_hide)
             self._hide_cb.blockSignals(False)
@@ -328,10 +327,7 @@ class MainWindow(QMainWindow):
     def _on_hide_completed_changed(self, _state: int) -> None:
         hide = self._hide_cb.isChecked()
         try:
-            from data.processor import load_user_variables, save_user_variables, set_hide_completed
-            uv = load_user_variables()
-            set_hide_completed(uv, hide, username=self._username)
-            save_user_variables(uv)
+            self._state.set_hide_completed(hide, username=self._username)
         except Exception:
             pass
         self._refresh_overview()
@@ -348,12 +344,11 @@ class MainWindow(QMainWindow):
             return
         try:
             from data.processor import (
-                load_system_variables, load_user_variables,
                 prepare_statusbord, prepare_configuratie,
                 get_aircraft_list, get_calendar_inspections, get_cycle_inspections,
             )
-            sys_vars  = load_system_variables()
-            user_vars = load_user_variables()
+            sys_vars  = self._state.load_system_variables()
+            user_vars = self._state.load_user_variables()
 
             if refresh_planning:
                 # Databron gewijzigd: herbouw centrale cache.
@@ -373,13 +368,12 @@ class MainWindow(QMainWindow):
                 self._store, sys_vars, user_vars,
                 df_cal=self._df_cal, df_cyc=self._df_cyc,
             )
-            from data.processor import get_hide_completed
             self._overview_tab.load_data(
                 self._store, sys_vars, user_vars,
                 username=self._username, work_mode=self._work_mode,
                 df_sb=self._df_sb, df_cal=self._df_cal, df_cyc=self._df_cyc,
                 df_cfg=self._df_cfg, statusbord_fp=self._statusbord_fp,
-                hide_completed=get_hide_completed(user_vars, username=self._username),
+                hide_completed=self._state.get_hide_completed(username=self._username),
             )
             if refresh_planning and self._df_cal is not None:
                 self._planning_tab.load_data(self._ac_list, self._df_cal, self._df_cyc, self._sys_vars)
@@ -409,8 +403,7 @@ class MainWindow(QMainWindow):
 
     def _check_for_updates(self):
         try:
-            from data.processor import last_meta
-            m = last_meta()
+            m = self._state.last_meta()
             if m != self._last_flag:
                 self._last_flag = m
                 self._request_meta_refresh()

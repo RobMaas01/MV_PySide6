@@ -50,9 +50,10 @@ def get_planning_inspections(
     """
     # --- Kalenderinspecties ---
     cal = df_cal.loc[df_cal['Aircraft'] == aircraft].copy()
-    cal['Geplande datum_dt'] = pd.to_datetime(
-        cal['Geplande datum'], format='%d-%m-%Y', errors='coerce'
-    )
+    if 'Geplande datum_dt' not in cal.columns:
+        cal['Geplande datum_dt'] = pd.to_datetime(
+            cal['Geplande datum'], format='%d-%m-%Y', errors='coerce'
+        )
     if planning_date:
         cal = cal.loc[cal['Geplande datum_dt'] < pd.to_datetime(planning_date)]
 

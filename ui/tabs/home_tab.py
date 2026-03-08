@@ -1,10 +1,11 @@
-"""
+﻿"""
 Home-tab: welkomstscherm met overzichtskaarten en helikopter-selectie.
 """
 import json
 import logging
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QPixmap
@@ -16,7 +17,6 @@ from PySide6.QtWidgets import (
 from ui.theme import SLATE_400, SLATE_700, WHITE
 
 _ICON_PATH   = Path(__file__).parent.parent.parent / 'assets' / 'NH90_Main.PNG'
-_CHECK_ICON  = str((Path(__file__).parent.parent.parent / 'assets' / 'check.svg')).replace('\\', '/')
 _UV_FILE     = Path(__file__).parent.parent.parent / 'settings' / 'MV_UserVariabelen.json'
 
 _CB_QSS = f"""
@@ -25,11 +25,10 @@ _CB_QSS = f"""
     }}
     QCheckBox::indicator {{
         width: 12px; height: 12px; border-radius: 3px;
-        border: 1px solid #cfd8e3; background: #ffffff;
+        border: 1px solid {SLATE_700}; background: #0f172a;
     }}
     QCheckBox::indicator:checked {{
-        background: #ffffff; border: 1px solid #cfd8e3;
-        image: url({_CHECK_ICON});
+        background: #1d4ed8; border: 1px solid #3b82f6;
     }}
 """
 
@@ -113,25 +112,29 @@ class _ImportWorker(QThread):
 
 
 class HomeTab(QWidget):
-    """Welkomstscherm — eerste tab in het hoofdvenster."""
+    """Welkomstscherm â€” eerste tab in het hoofdvenster."""
 
     tab_switch_requested    = Signal(int)
     work_mode_changed       = Signal(str)
     settings_saved          = Signal()
     import_completed        = Signal()
 
-    def __init__(self, username: str = '', work_mode: str = 'Flight MVKK', parent=None):
+    def __init__(
+        self,
+        username: str = '',
+        work_mode: str = 'Flight MVKK',
+        parent=None,
+        state_service: Any = None,
+    ):
         super().__init__(parent)
         self._stat_labels: dict[str, QLabel] = {}
         self._heli_checkboxes: dict[str, QCheckBox] = {}
         self._username = (username or '').strip()
         self._work_mode = str(work_mode or 'Flight MVKK')
+        self._state_service = state_service
         self._suspend_selection_events = False
         self._dirty = False
         self._status_clear_token = 0
-        self._save_timer = QTimer(self)
-        self._save_timer.setSingleShot(True)
-        self._save_timer.timeout.connect(self._persist_filters)
 
         self.setObjectName('HomeTab')
         self._build_ui()
@@ -440,7 +443,7 @@ class HomeTab(QWidget):
         txt = QLabel(
             'Import statusboard:\n'
             'Gebruik dit om een nieuwere statusboard Excel-file te laden vanuit Downloads of een andere map.\n'
-            'Het bestand wordt eerst gevalideerd (verplichte kolommen), daarna gekopieerd naar de app-datasource en geïmporteerd.\n'
+            'Het bestand wordt eerst gevalideerd (verplichte kolommen), daarna gekopieerd naar de app-datasource en geÃ¯mporteerd.\n'
             'Na een succesvolle import worden alle schermen ververst met de nieuwe data.\n\n'
             'Locatie:\n'
             'Kies het actieve werkgebied. Dit bepaalt welke data en standaardwaarden worden gebruikt.\n'
@@ -476,11 +479,6 @@ class HomeTab(QWidget):
         if token == self._status_clear_token:
             self._heli_status.setText('')
 
-    def _mark_dirty(self, schedule_ms: int = 450) -> None:
-        self._dirty = True
-        self._set_status('')
-        self._save_timer.start(schedule_ms)
-
     def _collect_selected(self) -> list[str]:
         return [name for name, cb in self._heli_checkboxes.items() if cb.isChecked()]
 
@@ -495,13 +493,16 @@ class HomeTab(QWidget):
             return
         self._work_mode = mode
         self._load_helis()
-        # Sla alleen de mode op — geen heli-selectie herschrijven, geen settings_saved.
-        # work_mode_changed triggert één _refresh_overview via MainWindow.
+        # Sla alleen de mode op â€” geen heli-selectie herschrijven, geen settings_saved.
+        # work_mode_changed triggert Ã©Ã©n _refresh_overview via MainWindow.
         try:
-            from data.processor import load_user_variables, save_user_variables, set_work_mode
-            uv = load_user_variables()
-            set_work_mode(uv, mode, username=self._username)
-            save_user_variables(uv)
+            if self._state_service is not None:
+                self._state_service.set_work_mode(mode, username=self._username)
+            else:
+                from data.processor import load_user_variables, save_user_variables, set_work_mode
+                uv = load_user_variables()
+                set_work_mode(uv, mode, username=self._username)
+                save_user_variables(uv)
         except Exception:
             pass
         self.work_mode_changed.emit(text)
@@ -518,11 +519,16 @@ class HomeTab(QWidget):
     def _load_helis(self) -> None:
         if not _UV_FILE.exists() or not self._heli_checkboxes:
             return
-        from data.processor import load_user_variables, get_selected_aircraft
-        uv = load_user_variables()
-        selected = set(get_selected_aircraft(
-            uv, username=self._username, work_mode=self._work_mode
-        ))
+        if self._state_service is not None:
+            selected = set(self._state_service.get_selected_aircraft(
+                username=self._username, work_mode=self._work_mode
+            ))
+        else:
+            from data.processor import load_user_variables, get_selected_aircraft
+            uv = load_user_variables()
+            selected = set(get_selected_aircraft(
+                uv, username=self._username, work_mode=self._work_mode
+            ))
         self._suspend_selection_events = True
         for name, cb in self._heli_checkboxes.items():
             cb.setChecked(name in selected)
@@ -530,22 +536,30 @@ class HomeTab(QWidget):
         self._set_status('')
 
     def _save_helis(self) -> None:
-        self._save_timer.stop()
+        if not self._dirty:
+            return
         self._persist_filters(force=True)
 
     def _persist_filters(self, force: bool = False) -> None:
         if not force and not self._dirty:
             return
         try:
-            from data.processor import (
-                load_user_variables, save_user_variables,
-                set_selected_aircraft, set_work_mode,
-            )
-            uv = load_user_variables()
-            set_work_mode(uv, self._work_mode, username=self._username)
             selected = self._collect_selected()
-            set_selected_aircraft(uv, selected, username=self._username, work_mode=self._work_mode)
-            save_user_variables(uv)
+            if self._state_service is not None:
+                self._state_service.save_selection_and_mode(
+                    selected=selected,
+                    mode=self._work_mode,
+                    username=self._username,
+                )
+            else:
+                from data.processor import (
+                    load_user_variables, save_user_variables,
+                    set_selected_aircraft, set_work_mode,
+                )
+                uv = load_user_variables()
+                set_work_mode(uv, self._work_mode, username=self._username)
+                set_selected_aircraft(uv, selected, username=self._username, work_mode=self._work_mode)
+                save_user_variables(uv)
         except Exception as exc:
             self._set_status('x  Save failed')
             QMessageBox.warning(self, 'Save failed', str(exc))
@@ -604,3 +618,4 @@ class HomeTab(QWidget):
 
         except Exception:
             logging.warning('update_stats mislukt', exc_info=True)
+

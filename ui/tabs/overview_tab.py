@@ -853,7 +853,7 @@ def _build_info_card(aircraft: str, hrs: float,
     v.addSpacing(4)
 
     for label, fn in [
-        ('Serial Nrs', open_sn),
+        ('Role Equip.', open_sn),
         ('Item Hours', open_hrs),
         ('ECU',        open_ecu),
     ]:
@@ -1002,6 +1002,7 @@ class OverviewTab(QWidget):
         super().__init__(parent)
         self._completed_keys: set[str] = set()
         self._statusbord_fp: str = ''
+        self._hide_completed: bool = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -1090,6 +1091,10 @@ class OverviewTab(QWidget):
             QMessageBox.warning(self, 'Save failed', str(exc))
             return
 
+        # Als completed items verborgen zijn, moet een net afgeronde inspectie direct verdwijnen.
+        if mark_done and self._hide_completed and hasattr(self.window(), '_refresh_overview'):
+            self.window()._refresh_overview()
+
     def load_data(self, store, sys_vars: dict, user_vars: dict,
                   username: str | None = None, work_mode: str | None = None,
                   df_sb=None, df_cal=None, df_cyc=None,
@@ -1101,6 +1106,7 @@ class OverviewTab(QWidget):
 
         if store.statusbord is None:
             return
+        self._hide_completed = bool(hide_completed)
 
         # Gebruik gecachede DataFrames als beschikbaar — anders zelf berekenen (fallback).
         if df_sb is None:
