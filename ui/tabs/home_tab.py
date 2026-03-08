@@ -19,7 +19,7 @@ _ICON_PATH = Path(__file__).parent.parent.parent / 'assets' / 'NH90_Main.PNG'
 
 _CB_QSS = f"""
     QCheckBox {{
-        color: {WHITE}; font-size: 13px; spacing: 6px; background: transparent;
+        color: {WHITE}; font-size: 14px; font-weight: 600; spacing: 6px; background: transparent;
     }}
     QCheckBox::indicator {{
         width: 12px; height: 12px; border-radius: 3px;
@@ -133,6 +133,11 @@ class HomeTab(QWidget):
         self._suspend_selection_events = False
         self._dirty = False
         self._status_clear_token = 0
+
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(400)
+        self._save_timer.timeout.connect(lambda: self._persist_filters(force=True))
 
         self.setObjectName('HomeTab')
         self._build_ui()
@@ -248,23 +253,16 @@ class HomeTab(QWidget):
         vh.setContentsMargins(10, 10, 10, 10)
         vh.setSpacing(5)
 
-        mode_row = QHBoxLayout()
-        mode_row.setSpacing(6)
-        mode_lbl = QLabel('Location')
-        mode_lbl.setStyleSheet(
-            f'color: {WHITE}; font-size: 10px; font-weight: bold; background: transparent; border: none;'
-        )
         self._mode_combo = QComboBox()
         self._mode_combo.addItems(['Flight MVKK', 'Out of area 1', 'Out of area 2', 'Out of area 3', 'BVP'])
         self._mode_combo.setCurrentText(self._work_mode)
         self._mode_combo.currentTextChanged.connect(self._on_mode_changed)
-        mode_row.addWidget(mode_lbl)
-        mode_row.addWidget(self._mode_combo, stretch=1)
-        vh.addLayout(mode_row)
+        vh.addWidget(self._mode_combo)
+        vh.addSpacing(8)
 
         grid = QGridLayout()
         grid.setSpacing(3)
-        grid.setContentsMargins(0, 2, 0, 0)
+        grid.setContentsMargins(0, 0, 0, 0)
 
         try:
             from data.processor import load_user_variables
@@ -283,20 +281,11 @@ class HomeTab(QWidget):
 
         vh.addLayout(grid)
 
-        save_row = QHBoxLayout()
-        save_row.setSpacing(6)
-        save_btn = QPushButton('Save')
-        save_btn.setStyleSheet(_BTN_QSS)
-        save_btn.setFixedHeight(26)
-        save_btn.clicked.connect(self._save_helis)
         self._heli_status = QLabel('')
         self._heli_status.setStyleSheet(
             'color: #4ade80; font-size: 11px; background: transparent; border: none;'
         )
-        save_row.addWidget(save_btn)
-        save_row.addWidget(self._heli_status)
-        save_row.addStretch()
-        vh.addLayout(save_row)
+        vh.addWidget(self._heli_status)
 
 
         self._import_btn = QPushButton('Import statusboard')
@@ -486,6 +475,7 @@ class HomeTab(QWidget):
         if self._suspend_selection_events:
             return
         self._dirty = True
+        self._save_timer.start()
 
     def _on_mode_changed(self, text: str) -> None:
         mode = str(text)
@@ -534,11 +524,6 @@ class HomeTab(QWidget):
             cb.setChecked(name in selected)
         self._suspend_selection_events = False
         self._set_status('')
-
-    def _save_helis(self) -> None:
-        if not self._dirty:
-            return
-        self._persist_filters(force=True)
 
     def _persist_filters(self, force: bool = False) -> None:
         if not force and not self._dirty:

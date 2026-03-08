@@ -42,10 +42,6 @@ def _sources(folder: Path) -> list[tuple]:
         ('configuratie', 'configuratie', folder / 'configuratie.xlsx',
          {'sheet_name': 'Basislijst',
           'converters': {'Equipment': str, 'Bovenligg.equipment': str}}),
-        ('mis',          'mis',          folder / 'mis.xlsx',
-         {'sheet_name': 'ZZ_MIS'}),
-        ('three_ms',     '3ms',          folder / '3ms.xlsx',
-         {}),
     ]
 
 
@@ -58,8 +54,6 @@ class DataStore:
     def __init__(self):
         self.statusbord:    pd.DataFrame | None = None
         self.configuratie:  pd.DataFrame | None = None
-        self.mis:           pd.DataFrame | None = None
-        self.three_ms:      pd.DataFrame | None = None
 
         self.load_errors: dict[str, str] = {}
 
@@ -101,7 +95,7 @@ class DataStore:
                 store.load_errors[table] = 'Laden uit SQLite mislukt'
                 log.warning('  x %s: SQLite-laden mislukt', table)
 
-        ok  = [k for k in ('statusbord', 'configuratie', 'mis', '3ms')
+        ok  = [k for k in ('statusbord', 'configuratie')
                if k not in store.load_errors]
         err = list(store.load_errors.keys())
         log.info('DataStore geladen — OK: %s  Fouten: %s', ok, err)

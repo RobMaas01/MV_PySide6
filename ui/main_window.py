@@ -133,7 +133,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle('Maintenance Viewer')
         self.setMinimumSize(1000, 600)
         self.setStyleSheet(APP_QSS)
-        self.setWindowIcon(QIcon(str(Path(__file__).parent.parent / 'assets' / 'NH90_taskbar.PNG')))
+        self.setWindowIcon(QIcon(str(Path(__file__).parent.parent / 'assets' / 'NH90_taskbar.ico')))
         username, login_count = _track_login()
         self._username = username
 
@@ -256,8 +256,6 @@ class MainWindow(QMainWindow):
         names = [
             ('statusbord',   'Statusbord',   store.statusbord),
             ('configuratie', 'Configuratie', store.configuratie),
-            ('mis',          'MIS',          store.mis),
-            ('3ms',          '3MS',          store.three_ms),
         ]
         parts = []
         for key, label, df in names:

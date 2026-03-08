@@ -95,12 +95,14 @@ class PlanningTableModel(QAbstractTableModel):
         self._df   = pd.DataFrame()
         self._cols: list[str] = []
         self._rest_col = -1
+        self._date_col = -1
 
     def load(self, df: pd.DataFrame):
         self.beginResetModel()
         self._df       = df.reset_index(drop=True)
         self._cols     = list(df.columns)
         self._rest_col = self._cols.index('Rest') if 'Rest' in self._cols else -1
+        self._date_col = self._cols.index('Geplande datum') if 'Geplande datum' in self._cols else -1
         self.endResetModel()
 
     def rowCount(self, parent=QModelIndex()) -> int:
@@ -120,6 +122,11 @@ class PlanningTableModel(QAbstractTableModel):
             return text
 
         if role == Qt.ItemDataRole.UserRole:          # numeric sort key
+            if c == self._date_col and text:
+                try:
+                    return pd.to_datetime(text, dayfirst=True).timestamp()
+                except Exception:
+                    return None
             try:
                 return float(text) if text else None
             except ValueError:

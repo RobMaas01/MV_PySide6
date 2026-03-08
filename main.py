@@ -29,10 +29,10 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName('MV App')
     app.setQuitOnLastWindowClosed(True)
-    app.setWindowIcon(QIcon(str(Path(__file__).parent / 'assets' / 'NH90_taskbar.PNG')))
+    app.setWindowIcon(QIcon(str(Path(__file__).parent / 'assets' / 'NH90_taskbar.ico')))
 
     window = MainWindow()
-    window.setWindowIcon(QIcon(str(Path(__file__).parent / 'assets' / 'NH90_taskbar.PNG')))
+    window.setWindowIcon(QIcon(str(Path(__file__).parent / 'assets' / 'NH90_taskbar.ico')))
     window.showMaximized()
     window.raise_()
     window.activateWindow()
