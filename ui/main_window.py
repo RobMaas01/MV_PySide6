@@ -13,7 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QCursor, QIcon
 from PySide6.QtWidgets import (
-    QLabel,
+    QLabel, QComboBox,
     QMainWindow, QStatusBar, QTabWidget,
 )
 
@@ -107,8 +107,10 @@ class MainWindow(QMainWindow):
         self._store = None
         # timer to poll for external changes (last_change.txt) + visible check counter
         self._last_flag = 0.0
-        self._check_interval_sec = 5
+        self._check_interval_sec = 2
         self._update_check_count = 1
+        self._username = ''
+        self._work_mode = 'B1'
         self._meta_timer = QTimer(self)
         self._meta_timer.timeout.connect(self._check_for_updates)
 
@@ -125,6 +127,8 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1000, 600)
         self.setStyleSheet(APP_QSS)
         self.setWindowIcon(QIcon(str(Path(__file__).parent.parent / 'assets' / 'NH90_taskbar.PNG')))
+        username, login_count = _track_login()
+        self._username = username
 
         self._tabs = QTabWidget()
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
@@ -132,7 +136,8 @@ class MainWindow(QMainWindow):
         self._tabs.setDocumentMode(True)
 
         # Pagina 0: Home
-        self._home_tab = HomeTab()
+        self._work_mode = self._load_work_mode()
+        self._home_tab = HomeTab(username=self._username, work_mode=self._work_mode)
         self._home_tab.tab_switch_requested.connect(self._tabs.setCurrentIndex)
         self._home_tab.settings_saved.connect(self._refresh_overview)
         self._home_tab.import_completed.connect(self._reload_data)
@@ -171,15 +176,47 @@ class MainWindow(QMainWindow):
         """)
         self.setStatusBar(self._status_bar)
 
-        username, login_count = _track_login()
         _user_lbl = QLabel(f'  Welcome, {username}   |   Logins: {login_count}  ')
         _user_lbl.setStyleSheet(f'color: {SLATE_400}; font-size: 11px; background: transparent;')
         self._status_bar.addPermanentWidget(_user_lbl)
+
+        self._mode_lbl = QLabel('  Work mode:  ')
+        self._mode_lbl.setStyleSheet(f'color: {SLATE_400}; font-size: 11px; background: transparent;')
+        self._status_bar.addPermanentWidget(self._mode_lbl)
+
+        self._mode_combo = QComboBox()
+        self._mode_combo.addItems(['B1', 'B2', 'B3', 'BVP'])
+        self._mode_combo.setCurrentText(self._work_mode)
+        self._mode_combo.currentTextChanged.connect(self._on_work_mode_changed)
+        self._status_bar.addPermanentWidget(self._mode_combo)
 
         self._update_lbl = QLabel('')
         self._update_lbl.setStyleSheet(f'color: {SLATE_400}; font-size: 11px; background: transparent;')
         self._status_bar.addPermanentWidget(self._update_lbl)
         self._render_update_counter()
+
+    def _load_work_mode(self) -> str:
+        try:
+            from data.processor import load_user_variables, get_work_mode
+            uv = load_user_variables()
+            return get_work_mode(uv, username=self._username)
+        except Exception:
+            return 'B1'
+
+    def _on_work_mode_changed(self, mode: str) -> None:
+        mode = str(mode).upper()
+        if mode == self._work_mode:
+            return
+        self._work_mode = mode
+        try:
+            from data.processor import load_user_variables, save_user_variables, set_work_mode
+            uv = load_user_variables()
+            set_work_mode(uv, self._work_mode, username=self._username)
+            save_user_variables(uv)
+        except Exception as exc:
+            self._status_bar.showMessage(f'  Mode save error: {exc}')
+        self._home_tab.set_context(self._username, self._work_mode)
+        self._refresh_overview()
 
     # ------------------------------------------------------------------
     # Laden
@@ -222,14 +259,20 @@ class MainWindow(QMainWindow):
             sys_vars  = load_system_variables()
             user_vars = load_user_variables()
 
+            self._home_tab.set_context(self._username, self._work_mode)
             self._home_tab.update_stats(store, sys_vars, user_vars)
-            self._overview_tab.load_data(store, sys_vars, user_vars)
+            self._overview_tab.load_data(
+                store, sys_vars, user_vars,
+                username=self._username, work_mode=self._work_mode
+            )
 
             if store.statusbord is not None:
                 df_sb   = prepare_statusbord(store.statusbord)
                 df_cal  = get_calendar_inspections(df_sb)
                 df_cyc  = get_cycle_inspections(df_sb)
-                ac_list = get_aircraft_list(df_sb)
+                ac_list = get_aircraft_list(
+                    df_sb, user_vars, username=self._username, work_mode=self._work_mode
+                )
                 self._planning_tab.load_data(ac_list, df_cal, df_cyc, sys_vars)
         except Exception as exc:
             self._status_bar.showMessage(f'  Load error: {exc}')
@@ -248,14 +291,20 @@ class MainWindow(QMainWindow):
             )
             sys_vars  = load_system_variables()
             user_vars = load_user_variables()
+            self._home_tab.set_context(self._username, self._work_mode)
             self._home_tab.update_stats(self._store, sys_vars, user_vars)
-            self._overview_tab.load_data(self._store, sys_vars, user_vars)
+            self._overview_tab.load_data(
+                self._store, sys_vars, user_vars,
+                username=self._username, work_mode=self._work_mode
+            )
 
             if self._store.statusbord is not None:
                 df_sb   = prepare_statusbord(self._store.statusbord)
                 df_cal  = get_calendar_inspections(df_sb)
                 df_cyc  = get_cycle_inspections(df_sb)
-                ac_list = get_aircraft_list(df_sb)
+                ac_list = get_aircraft_list(
+                    df_sb, user_vars, username=self._username, work_mode=self._work_mode
+                )
                 self._planning_tab.load_data(ac_list, df_cal, df_cyc, sys_vars)
         except Exception as exc:
             self._status_bar.showMessage(f'  Refresh error: {exc}')

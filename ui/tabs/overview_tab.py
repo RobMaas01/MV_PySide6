@@ -1077,7 +1077,8 @@ class OverviewTab(QWidget):
             QMessageBox.warning(self, 'Save failed', str(exc))
             return
 
-    def load_data(self, store, sys_vars: dict, user_vars: dict) -> None:
+    def load_data(self, store, sys_vars: dict, user_vars: dict,
+                  username: str | None = None, work_mode: str | None = None) -> None:
         from data.processor import (
             get_aircraft_list, get_calendar_inspections, get_cycle_inspections,
             prepare_configuratie, prepare_statusbord, save_user_variables,
@@ -1112,7 +1113,9 @@ class OverviewTab(QWidget):
                 pass
         self._completed_keys = done_set
 
-        aircraft_list = get_aircraft_list(df_sb, user_vars)
+        aircraft_list = get_aircraft_list(
+            df_sb, user_vars, username=username, work_mode=work_mode
+        )
         fh_poref = sys_vars.get('Kenmerken', {}).get('Flight Hrs', [''])[0]
 
         while self._con_layout.count():

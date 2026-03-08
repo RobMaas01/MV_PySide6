@@ -3,6 +3,7 @@ Dataverwerking voor MV3 overzichtscherm.
 Zet ruwe DataStore-DataFrames om naar kant-en-klare weergave-DataFrames.
 """
 import json
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 N_ROWS = 7
+WORK_MODES = ('B1', 'B2', 'B3', 'BVP')
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +36,85 @@ def load_user_variables() -> dict:
 def load_system_variables() -> dict:
     with open(_settings_dir() / 'MV_SystemVariabelen.json', encoding='utf-8') as f:
         return json.load(f)
+
+
+def _normalize_user(username: str | None) -> str:
+    u = (username or '').strip()
+    return u.lower()
+
+
+def get_current_username() -> str:
+    return _normalize_user(os.environ.get('USERNAME') or os.environ.get('USER') or '')
+
+
+def _legacy_selected_aircraft(user_vars: dict) -> list[str]:
+    heli = user_vars.get('helikopter', {})
+    return sorted([k for k, v in heli.items() if v.get('Location_1', False)])
+
+
+def get_work_mode(user_vars: dict, username: str | None = None) -> str:
+    user_key = _normalize_user(username) or get_current_username()
+    by_user = user_vars.get('work_mode_by_user', {})
+    mode = str(by_user.get(user_key, 'B1')).upper()
+    return mode if mode in WORK_MODES else 'B1'
+
+
+def set_work_mode(user_vars: dict, mode: str, username: str | None = None) -> str:
+    user_key = _normalize_user(username) or get_current_username()
+    mode_up = str(mode).upper()
+    if mode_up not in WORK_MODES:
+        mode_up = 'B1'
+    by_user = user_vars.setdefault('work_mode_by_user', {})
+    by_user[user_key] = mode_up
+    return mode_up
+
+
+def get_selected_aircraft(user_vars: dict,
+                          username: str | None = None,
+                          work_mode: str | None = None) -> list[str]:
+    user_key = _normalize_user(username) or get_current_username()
+    mode = (work_mode or get_work_mode(user_vars, user_key)).upper()
+    legacy = _legacy_selected_aircraft(user_vars)
+
+    scope = user_vars.setdefault('overview_filters', {})
+    groups = scope.setdefault('groups', {})
+    bvp_by_user = scope.setdefault('bvp_by_user', {})
+
+    if mode == 'BVP':
+        selected = bvp_by_user.get(user_key)
+        if not isinstance(selected, list):
+            selected = list(legacy)
+            bvp_by_user[user_key] = selected
+        return sorted(dict.fromkeys(str(a) for a in selected))
+
+    selected = groups.get(mode)
+    if not isinstance(selected, list):
+        selected = list(legacy)
+        groups[mode] = selected
+    return sorted(dict.fromkeys(str(a) for a in selected))
+
+
+def set_selected_aircraft(user_vars: dict, selected: list[str],
+                          username: str | None = None,
+                          work_mode: str | None = None) -> None:
+    user_key = _normalize_user(username) or get_current_username()
+    mode = (work_mode or get_work_mode(user_vars, user_key)).upper()
+    sel = sorted(dict.fromkeys(str(a) for a in selected))
+
+    scope = user_vars.setdefault('overview_filters', {})
+    groups = scope.setdefault('groups', {})
+    bvp_by_user = scope.setdefault('bvp_by_user', {})
+    if mode == 'BVP':
+        bvp_by_user[user_key] = sel
+    else:
+        groups[mode] = sel
+
+    # legacy mirror voor backward compat / debug readability
+    heli = user_vars.get('helikopter', {})
+    sel_set = set(sel)
+    for ac, data in heli.items():
+        if isinstance(data, dict):
+            data['Location_1'] = ac in sel_set
 
 
 # ---------------------------------------------------------------------------
@@ -84,11 +165,12 @@ def get_cycle_inspections(df_sb: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def get_aircraft_list(df_sb: pd.DataFrame, user_vars: dict | None = None) -> list:
+def get_aircraft_list(df_sb: pd.DataFrame, user_vars: dict | None = None,
+                      username: str | None = None,
+                      work_mode: str | None = None) -> list:
     """Geeft gesorteerde lijst van vliegtuigen. Filtert op Location_1 als user_vars beschikbaar."""
     if user_vars:
-        heli   = user_vars.get('helikopter', {})
-        loc1   = [k for k, v in heli.items() if v.get('Location_1', False)]
+        loc1 = get_selected_aircraft(user_vars, username=username, work_mode=work_mode)
         in_data = set(df_sb['Aircraft'].dropna().unique())
         return sorted(a for a in loc1 if a in in_data)
     return sorted(df_sb['Aircraft'].dropna().unique().tolist())

@@ -104,10 +104,12 @@ class HomeTab(QWidget):
     settings_saved       = Signal()
     import_completed     = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, username: str = '', work_mode: str = 'B1', parent=None):
         super().__init__(parent)
         self._stat_labels: dict[str, QLabel] = {}
         self._heli_checkboxes: dict[str, QCheckBox] = {}
+        self._username = (username or '').strip()
+        self._work_mode = str(work_mode or 'B1').upper()
 
         self.setObjectName('HomeTab')
         self._build_ui()
@@ -234,6 +236,11 @@ class HomeTab(QWidget):
         lbl_hs.setWordWrap(True)
         vh.addWidget(lbl_h)
         vh.addWidget(lbl_hs)
+        self._ctx_lbl = QLabel('')
+        self._ctx_lbl.setStyleSheet(
+            f'color: {SLATE_400}; font-size: 10px; background: transparent; border: none;'
+        )
+        vh.addWidget(self._ctx_lbl)
 
         div_h = QFrame()
         div_h.setFixedHeight(1)
@@ -348,31 +355,30 @@ class HomeTab(QWidget):
     # Helikopter-selectie
     # ------------------------------------------------------------------
 
+    def set_context(self, username: str, work_mode: str) -> None:
+        self._username = (username or '').strip()
+        self._work_mode = str(work_mode or 'B1').upper()
+        self._load_helis()
+
     def _load_helis(self) -> None:
         if not _UV_FILE.exists() or not self._heli_checkboxes:
             return
-        with open(_UV_FILE, encoding='utf-8') as f:
-            uv = json.load(f)
-        helis = uv.get('helikopter', {})
+        from data.processor import load_user_variables, get_selected_aircraft
+        uv = load_user_variables()
+        selected = set(get_selected_aircraft(
+            uv, username=self._username, work_mode=self._work_mode
+        ))
         for name, cb in self._heli_checkboxes.items():
-            cb.setChecked(helis.get(name, {}).get('Location_1', False))
+            cb.setChecked(name in selected)
+        scope = 'personal' if self._work_mode == 'BVP' else 'shared group'
+        self._ctx_lbl.setText(f'Context: {self._work_mode} ({scope})')
 
     def _save_helis(self) -> None:
-        if not _UV_FILE.exists():
-            return
-        with open(_UV_FILE, encoding='utf-8') as f:
-            uv = json.load(f)
-        for name, cb in self._heli_checkboxes.items():
-            if name in uv.get('helikopter', {}):
-                uv['helikopter'][name]['Location_1'] = cb.isChecked()
-        with open(_UV_FILE, 'w', encoding='utf-8') as f:
-            json.dump(uv, f, indent=2, ensure_ascii=False)
-        # update flag zodat anderen kunnen zien dat er iets is veranderd
-        try:
-            from data.processor import touch_meta
-            touch_meta()
-        except Exception:
-            pass
+        from data.processor import load_user_variables, save_user_variables, set_selected_aircraft
+        uv = load_user_variables()
+        selected = [name for name, cb in self._heli_checkboxes.items() if cb.isChecked()]
+        set_selected_aircraft(uv, selected, username=self._username, work_mode=self._work_mode)
+        save_user_variables(uv)
         self._heli_status.setText('v  Saved')
         self.settings_saved.emit()
 
@@ -389,7 +395,9 @@ class HomeTab(QWidget):
             )
 
             df_sb   = prepare_statusbord(store.statusbord) if store.statusbord is not None else None
-            ac_list = get_aircraft_list(df_sb, user_vars) if df_sb is not None else []
+            ac_list = get_aircraft_list(
+                df_sb, user_vars, username=self._username, work_mode=self._work_mode
+            ) if df_sb is not None else []
             df_filtered = df_sb[df_sb['Aircraft'].isin(ac_list)] if df_sb is not None else None
             df_cal  = get_calendar_inspections(df_filtered) if df_filtered is not None else pd.DataFrame()
             df_cyc  = get_cycle_inspections(df_filtered)  if df_filtered is not None else pd.DataFrame()
