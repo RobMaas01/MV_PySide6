@@ -1,6 +1,6 @@
-"""
+﻿"""
 Hoofdvenster voor MV3 (PySide6).
-Navigatie als tabbalk bovenaan — geen zijbalk.
+Navigatie als tabbalk bovenaan â€” geen zijbalk.
 Content neemt de volledige breedte in.
 """
 import json
@@ -14,8 +14,10 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QCursor, QIcon
 from PySide6.QtWidgets import (
+    QCheckBox, QHBoxLayout,
     QLabel,
     QMainWindow, QStatusBar, QTabWidget,
+    QWidget,
 )
 
 from ui.tabs.home_tab import HomeTab
@@ -107,6 +109,13 @@ class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._store = None
+        self._df_sb:         object = None   # prepare_statusbord output (alle aircraft)
+        self._df_cal:        object = None   # get_calendar_inspections output
+        self._df_cyc:        object = None   # get_cycle_inspections output
+        self._df_cfg:        object = None   # prepare_configuratie output (statisch)
+        self._ac_list:       list   = []
+        self._sys_vars:      dict   = {}
+        self._statusbord_fp: str    = ''     # sha1 van statusbord; opnieuw berekend na import
         # timer to poll for external changes (last_change.txt) + visible check counter
         self._last_flag = 0.0
         self._check_interval_sec = 2
@@ -139,6 +148,33 @@ class MainWindow(QMainWindow):
         self._tabs.setStyleSheet(_TAB_QSS)
         self._tabs.setDocumentMode(True)
         self._tabs.currentChanged.connect(self._on_tab_changed)
+
+        # Corner widget rechts â€” met ~8cm spacing rechts voor zichtbaarheid
+        self._hide_cb = QCheckBox('Hide completed inspecties')
+        _check_icon = str(Path(__file__).parent.parent / 'assets' / 'check.svg').replace('\\', '/')
+        self._hide_cb.setStyleSheet(f"""
+            QCheckBox {{ color: #1a1a1a; font-size: 12px; spacing: 8px; background: transparent; }}
+            QCheckBox::indicator {{ width: 13px; height: 13px; border-radius: 3px;
+                border: 1px solid #888; background: #ffffff; }}
+            QCheckBox::indicator:checked {{ background: #ffffff; border: 1px solid #888;
+                image: url({_check_icon}); }}
+        """)
+        self._hide_cb.stateChanged.connect(self._on_hide_completed_changed)
+        _cb_block = QWidget()
+        _cb_block.setStyleSheet('background: #b0b8c1; border-radius: 4px;')
+        _cbl = QHBoxLayout(_cb_block)
+        _cbl.setContentsMargins(10, 3, 10, 3)
+        _cbl.addWidget(self._hide_cb)
+
+        _corner = QWidget()
+        _corner.setStyleSheet('background: transparent;')
+        _cl = QHBoxLayout(_corner)
+        _cl.setContentsMargins(0, 4, 0, 0)
+        _cl.setSpacing(0)
+        _cl.addWidget(_cb_block)
+        _cl.addSpacing(420)
+        self._tabs.setCornerWidget(_corner, Qt.Corner.TopRightCorner)
+        _corner.setVisible(False)
 
         # Pagina 0: Home
         self._work_mode = self._load_work_mode()
@@ -241,59 +277,112 @@ class MainWindow(QMainWindow):
         try:
             from data.processor import (
                 load_system_variables, load_user_variables,
-                prepare_statusbord, get_aircraft_list,
-                get_calendar_inspections, get_cycle_inspections,
+                prepare_statusbord, prepare_configuratie,
+                get_aircraft_list, get_calendar_inspections, get_cycle_inspections,
             )
+            from ui.tabs.overview_tab import _statusbord_fingerprint
             sys_vars  = load_system_variables()
             user_vars = load_user_variables()
 
+            # Bouw centrale cache op â€” Ã©Ã©nmalige berekening voor alle tabs.
+            if store.statusbord is not None:
+                df_sb               = prepare_statusbord(store.statusbord)
+                self._df_sb         = df_sb
+                self._df_cal        = get_calendar_inspections(df_sb)
+                self._df_cyc        = get_cycle_inspections(df_sb)
+                self._ac_list       = get_aircraft_list(df_sb)
+                self._statusbord_fp = _statusbord_fingerprint(df_sb)
+            if store.configuratie is not None:
+                self._df_cfg = prepare_configuratie(store.configuratie)
+            self._sys_vars = sys_vars
+
             self._home_tab.set_context(self._username, self._work_mode)
-            self._home_tab.update_stats(store, sys_vars, user_vars)
+            self._home_tab.update_stats(
+                store, sys_vars, user_vars,
+                df_cal=self._df_cal, df_cyc=self._df_cyc,
+            )
+            from data.processor import get_hide_completed
+            _hide = get_hide_completed(user_vars, username=self._username)
+            self._hide_cb.blockSignals(True)
+            self._hide_cb.setChecked(_hide)
+            self._hide_cb.blockSignals(False)
             self._overview_tab.load_data(
                 store, sys_vars, user_vars,
-                username=self._username, work_mode=self._work_mode
+                username=self._username, work_mode=self._work_mode,
+                df_sb=self._df_sb, df_cal=self._df_cal, df_cyc=self._df_cyc,
+                df_cfg=self._df_cfg, statusbord_fp=self._statusbord_fp,
+                hide_completed=_hide,
             )
-
-            if store.statusbord is not None:
-                df_sb   = prepare_statusbord(store.statusbord)
-                df_cal  = get_calendar_inspections(df_sb)
-                df_cyc  = get_cycle_inspections(df_sb)
-                ac_list = get_aircraft_list(df_sb)
-                self._planning_tab.load_data(ac_list, df_cal, df_cyc, sys_vars)
+            if self._df_cal is not None:
+                self._planning_tab.load_data(self._ac_list, self._df_cal, self._df_cyc, sys_vars)
         except Exception as exc:
             self._status_bar.showMessage(f'  Load error: {exc}')
 
     # ------------------------------------------------------------------
 
     def _on_tab_changed(self, idx: int) -> None:
-        # Planning-data wordt lichtgewicht ververst zodra de gebruiker die tab opent.
-        if idx == 2 and self._store is not None:
-            self._refresh_overview(refresh_planning=True)
+        self._tabs.cornerWidget(Qt.Corner.TopRightCorner).setVisible(idx == 1)
+        # Planningdata wordt al geladen bij init en bij databron-refresh.
+        # Voorkomt zichtbare delay bij elke tab-switch naar Planning.
 
-    def _refresh_overview(self, refresh_planning: bool = True) -> None:
+    def _on_hide_completed_changed(self, _state: int) -> None:
+        hide = self._hide_cb.isChecked()
+        try:
+            from data.processor import load_user_variables, save_user_variables, set_hide_completed
+            uv = load_user_variables()
+            set_hide_completed(uv, hide, username=self._username)
+            save_user_variables(uv)
+        except Exception:
+            pass
+        self._refresh_overview()
+
+    def _refresh_overview(self, refresh_planning: bool = False) -> None:
+        """Ververs overview en home stats.
+
+        refresh_planning=False (default): alleen instellingen/filters gewijzigd â€”
+            gebruik gecachede DataFrames, geen herberekening.
+        refresh_planning=True: databron gewijzigd (import / meta-watcher) â€”
+            herbouw volledige cache en update alle tabs inclusief planning.
+        """
         if self._store is None:
             return
-        # reload data and settings from disk
         try:
             from data.processor import (
                 load_system_variables, load_user_variables,
-                prepare_statusbord, get_aircraft_list,
-                get_calendar_inspections, get_cycle_inspections,
+                prepare_statusbord, prepare_configuratie,
+                get_aircraft_list, get_calendar_inspections, get_cycle_inspections,
             )
             sys_vars  = load_system_variables()
             user_vars = load_user_variables()
-            self._home_tab.update_stats(self._store, sys_vars, user_vars)
+
+            if refresh_planning:
+                # Databron gewijzigd: herbouw centrale cache.
+                from ui.tabs.overview_tab import _statusbord_fingerprint
+                if self._store.statusbord is not None:
+                    df_sb               = prepare_statusbord(self._store.statusbord)
+                    self._df_sb         = df_sb
+                    self._df_cal        = get_calendar_inspections(df_sb)
+                    self._df_cyc        = get_cycle_inspections(df_sb)
+                    self._ac_list       = get_aircraft_list(df_sb)
+                    self._statusbord_fp = _statusbord_fingerprint(df_sb)
+                if self._store.configuratie is not None:
+                    self._df_cfg = prepare_configuratie(self._store.configuratie)
+                self._sys_vars = sys_vars
+
+            self._home_tab.update_stats(
+                self._store, sys_vars, user_vars,
+                df_cal=self._df_cal, df_cyc=self._df_cyc,
+            )
+            from data.processor import get_hide_completed
             self._overview_tab.load_data(
                 self._store, sys_vars, user_vars,
-                username=self._username, work_mode=self._work_mode
+                username=self._username, work_mode=self._work_mode,
+                df_sb=self._df_sb, df_cal=self._df_cal, df_cyc=self._df_cyc,
+                df_cfg=self._df_cfg, statusbord_fp=self._statusbord_fp,
+                hide_completed=get_hide_completed(user_vars, username=self._username),
             )
-
-            if refresh_planning and self._store.statusbord is not None:
-                df_sb   = prepare_statusbord(self._store.statusbord)
-                df_cal  = get_calendar_inspections(df_sb)
-                df_cyc  = get_cycle_inspections(df_sb)
-                ac_list = get_aircraft_list(df_sb)
-                self._planning_tab.load_data(ac_list, df_cal, df_cyc, sys_vars)
+            if refresh_planning and self._df_cal is not None:
+                self._planning_tab.load_data(self._ac_list, self._df_cal, self._df_cyc, self._sys_vars)
         except Exception as exc:
             self._status_bar.showMessage(f'  Refresh error: {exc}')
 
@@ -311,8 +400,7 @@ class MainWindow(QMainWindow):
             self._request_meta_refresh()
             return
         self._last_meta_refresh_at = now
-        refresh_planning = self._tabs.currentIndex() == 2
-        self._refresh_overview(refresh_planning=refresh_planning)
+        self._refresh_overview(refresh_planning=True)
 
     # ------------------------------------------------------------------
     # metadata polling
@@ -348,3 +436,4 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self.window_closed.emit()
         event.accept()
+

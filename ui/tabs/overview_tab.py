@@ -874,7 +874,8 @@ def _build_ac_section(aircraft: str, df_cal: pd.DataFrame, df_cyc: pd.DataFrame,
                        df_cfg, user_vars: dict, sys_vars: dict,
                        fh_poref: str,
                        completed_keys: set[str] | None = None,
-                       on_inspection_clicked=None) -> QWidget:
+                       on_inspection_clicked=None,
+                       hide_completed: bool = False) -> QWidget:
     from data.processor import get_ac_hrs, get_bijzonderheden
 
     hrs = get_ac_hrs(df_cyc, aircraft, fh_poref)
@@ -905,6 +906,9 @@ def _build_ac_section(aircraft: str, df_cal: pd.DataFrame, df_cyc: pd.DataFrame,
 
     # Kalender
     df_ac_cal = df_cal[df_cal['Aircraft'] == aircraft]
+    if hide_completed and completed_keys:
+        _ck_pre = [_inspection_row_key('cal', row) for _, row in df_ac_cal.iterrows()]
+        df_ac_cal = df_ac_cal[[k not in completed_keys for k in _ck_pre]]
     cal_keys = [_inspection_row_key('cal', row) for _, row in df_ac_cal.head(N_ROWS).iterrows()]
     h.addWidget(_build_table(
         df_ac_cal,
@@ -923,6 +927,9 @@ def _build_ac_section(aircraft: str, df_cal: pd.DataFrame, df_cyc: pd.DataFrame,
         (df_cyc['Aircraft'] == aircraft) &
         df_cyc['Kenmerknaam'].str.contains('HOURS', na=False)
     ]
+    if hide_completed and completed_keys:
+        _hk_pre = [_inspection_row_key('hrs', row) for _, row in df_ac_hrs.iterrows()]
+        df_ac_hrs = df_ac_hrs[[k not in completed_keys for k in _hk_pre]]
     hrs_keys = [_inspection_row_key('hrs', row) for _, row in df_ac_hrs.head(N_ROWS).iterrows()]
     h.addWidget(_build_table(
         df_ac_hrs,
@@ -942,6 +949,9 @@ def _build_ac_section(aircraft: str, df_cal: pd.DataFrame, df_cyc: pd.DataFrame,
         ~df_cyc['Kenmerknaam'].str.contains('HOURS', na=False)
     ].copy()
     df_ac_cyc['Kenmerknaam'] = df_ac_cyc['Kenmerknaam'].str.lower()
+    if hide_completed and completed_keys:
+        _ck_pre2 = [_inspection_row_key('cyc', row) for _, row in df_ac_cyc.iterrows()]
+        df_ac_cyc = df_ac_cyc[[k not in completed_keys for k in _ck_pre2]]
     cyc_keys = [_inspection_row_key('cyc', row) for _, row in df_ac_cyc.head(N_ROWS).iterrows()]
     h.addWidget(_build_table(
         df_ac_cyc,
@@ -994,6 +1004,7 @@ class OverviewTab(QWidget):
         self._statusbord_fp: str = ''
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1026,7 +1037,9 @@ class OverviewTab(QWidget):
         ov['completed_inspections'] = sorted(done_set)
         ov['statusbord_fingerprint'] = self._statusbord_fp
         save_user_variables(current)
-        self._completed_keys = done_set
+        # In-place update zodat tabel-closures dezelfde set-referentie blijven lezen.
+        self._completed_keys.clear()
+        self._completed_keys.update(done_set)
 
     def _paint_inspection_row(self, tbl: QTableWidget, row: int, mark_done: bool) -> None:
         bg = QColor(DONE_BG if row % 2 == 0 else DONE_ALT) if mark_done else QColor(TBL_BG if row % 2 == 0 else TBL_ALT)
@@ -1078,22 +1091,33 @@ class OverviewTab(QWidget):
             return
 
     def load_data(self, store, sys_vars: dict, user_vars: dict,
-                  username: str | None = None, work_mode: str | None = None) -> None:
+                  username: str | None = None, work_mode: str | None = None,
+                  df_sb=None, df_cal=None, df_cyc=None,
+                  df_cfg=None, statusbord_fp: str | None = None,
+                  hide_completed: bool = False) -> None:
         from data.processor import (
-            get_aircraft_list, get_calendar_inspections, get_cycle_inspections,
-            prepare_configuratie, prepare_statusbord, save_user_variables,
+            get_aircraft_list, save_user_variables,
         )
 
         if store.statusbord is None:
             return
 
-        df_sb  = prepare_statusbord(store.statusbord)
-        df_cal = get_calendar_inspections(df_sb)
-        df_cyc = get_cycle_inspections(df_sb)
-        df_cfg = prepare_configuratie(store.configuratie) if store.configuratie is not None else None
+        # Gebruik gecachede DataFrames als beschikbaar — anders zelf berekenen (fallback).
+        if df_sb is None:
+            from data.processor import prepare_statusbord
+            df_sb = prepare_statusbord(store.statusbord)
+        if df_cal is None:
+            from data.processor import get_calendar_inspections
+            df_cal = get_calendar_inspections(df_sb)
+        if df_cyc is None:
+            from data.processor import get_cycle_inspections
+            df_cyc = get_cycle_inspections(df_sb)
+        if df_cfg is None:
+            from data.processor import prepare_configuratie
+            df_cfg = prepare_configuratie(store.configuratie) if store.configuratie is not None else None
 
         # Laad persisted inspectie-status en schoon op bij nieuw statusbord.
-        self._statusbord_fp = _statusbord_fingerprint(df_sb)
+        self._statusbord_fp = statusbord_fp if statusbord_fp is not None else _statusbord_fingerprint(df_sb)
         ov = user_vars.setdefault('overview', {})
         stored_fp = str(ov.get('statusbord_fingerprint', ''))
         raw_done = ov.get('completed_inspections', [])
@@ -1128,6 +1152,7 @@ class OverviewTab(QWidget):
                 ac, df_cal, df_cyc, df_cfg, user_vars, sys_vars, fh_poref,
                 completed_keys=self._completed_keys,
                 on_inspection_clicked=self._on_inspection_clicked,
+                hide_completed=hide_completed,
             )
             self._con_layout.addWidget(section)
 

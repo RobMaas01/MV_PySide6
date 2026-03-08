@@ -80,7 +80,7 @@ def import_excel_to_table(path: Path, table_name: str, **read_kwargs) -> tuple[i
     try:
         df = pd.read_excel(path, **read_kwargs)
     except Exception as exc:
-        return 0, f'Kan bestand niet lezen: {exc}'
+        return 0, f'Could not read file: {exc}'
 
     _normalize_dates(df)
 
@@ -140,14 +140,14 @@ def import_statusbord(path: Path) -> dict:
     try:
         df = pd.read_excel(path, converters={'CyclusPOpakk': str})
     except Exception as exc:
-        return {'rows': 0, 'previous': 0, 'error': f'Kan bestand niet lezen: {exc}', 'copied_to': ''}
+        return {'rows': 0, 'previous': 0, 'error': f'Could not read file: {exc}', 'copied_to': ''}
 
     missing = _REQUIRED_STATUSBORD_COLS - set(df.columns)
     if missing:
         return {
             'rows': 0,
             'previous': 0,
-            'error': f'Verplichte kolommen ontbreken: {", ".join(sorted(missing))}',
+            'error': f'Required columns are missing: {", ".join(sorted(missing))}',
             'copied_to': '',
         }
 
@@ -158,7 +158,7 @@ def import_statusbord(path: Path) -> dict:
         shutil.copy2(path, dest_file)
         log.info('Statusbord gekopieerd naar %s', dest_file)
     except Exception as exc:
-        return {'rows': 0, 'previous': 0, 'error': f'Kopiëren mislukt: {exc}', 'copied_to': ''}
+        return {'rows': 0, 'previous': 0, 'error': f'Copy failed: {exc}', 'copied_to': ''}
 
     _normalize_dates(df)
 
@@ -166,8 +166,7 @@ def import_statusbord(path: Path) -> dict:
     try:
         previous = 0
         if table_exists('statusbord'):
-            row = pd.read_sql('SELECT COUNT(*) AS n FROM statusbord', conn)
-            previous = int(row['n'].iloc[0])
+            previous = conn.execute('SELECT COUNT(*) FROM statusbord').fetchone()[0]
 
         df.to_sql('statusbord', conn, if_exists='replace', index=False)
         log.info('Statusbord geïmporteerd: %d rijen (was %d)', len(df), previous)

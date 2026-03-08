@@ -6,28 +6,30 @@ import logging
 from datetime import date
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
-    QMessageBox, QPushButton, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QToolButton, QVBoxLayout, QWidget,
 )
 
 from ui.theme import SLATE_400, SLATE_700, WHITE
 
 _ICON_PATH   = Path(__file__).parent.parent.parent / 'assets' / 'NH90_Main.PNG'
+_CHECK_ICON  = str((Path(__file__).parent.parent.parent / 'assets' / 'check.svg')).replace('\\', '/')
 _UV_FILE     = Path(__file__).parent.parent.parent / 'settings' / 'MV_UserVariabelen.json'
 
 _CB_QSS = f"""
     QCheckBox {{
-        color: {WHITE}; font-size: 13px; spacing: 8px; background: transparent;
+        color: {WHITE}; font-size: 13px; spacing: 6px; background: transparent;
     }}
     QCheckBox::indicator {{
-        width: 16px; height: 16px; border-radius: 4px;
-        border: 1px solid {SLATE_700}; background: #0f172a;
+        width: 12px; height: 12px; border-radius: 3px;
+        border: 1px solid #cfd8e3; background: #ffffff;
     }}
     QCheckBox::indicator:checked {{
-        background: #1d4ed8; border: 1px solid #3b82f6;
+        background: #ffffff; border: 1px solid #cfd8e3;
+        image: url({_CHECK_ICON});
     }}
 """
 
@@ -97,13 +99,26 @@ def _stat_card(title: str, init_value: str = '-', subtitle: str = '') -> tuple:
     return card, lbl_v
 
 
+class _ImportWorker(QThread):
+    """Voert statusbord-import uit in achtergrond-thread."""
+    done = Signal(dict)
+
+    def __init__(self, path: Path, parent=None):
+        super().__init__(parent)
+        self._path = path
+
+    def run(self) -> None:
+        from data.database import import_statusbord
+        self.done.emit(import_statusbord(self._path))
+
+
 class HomeTab(QWidget):
     """Welkomstscherm — eerste tab in het hoofdvenster."""
 
-    tab_switch_requested = Signal(int)
-    work_mode_changed    = Signal(str)
-    settings_saved       = Signal()
-    import_completed     = Signal()
+    tab_switch_requested    = Signal(int)
+    work_mode_changed       = Signal(str)
+    settings_saved          = Signal()
+    import_completed        = Signal()
 
     def __init__(self, username: str = '', work_mode: str = 'Flight MVKK', parent=None):
         super().__init__(parent)
@@ -219,18 +234,18 @@ class HomeTab(QWidget):
         right.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         heli_frame = QFrame()
-        heli_frame.setFixedWidth(210)
+        heli_frame.setFixedWidth(176)
         heli_frame.setStyleSheet("""
             QFrame {
-                background: rgba(30, 41, 59, 180);
-                border: 1px solid rgba(100, 140, 200, 60);
+                background: rgba(30, 46, 72, 220);
+                border: 1px solid rgba(132, 176, 232, 150);
                 border-radius: 8px;
             }
         """)
 
         vh = QVBoxLayout(heli_frame)
-        vh.setContentsMargins(14, 12, 14, 12)
-        vh.setSpacing(6)
+        vh.setContentsMargins(10, 10, 10, 10)
+        vh.setSpacing(5)
 
         mode_row = QHBoxLayout()
         mode_row.setSpacing(6)
@@ -246,26 +261,9 @@ class HomeTab(QWidget):
         mode_row.addWidget(self._mode_combo, stretch=1)
         vh.addLayout(mode_row)
 
-        lbl_h = QLabel('Helicopters in overview')
-        lbl_h.setStyleSheet(
-            f'color: {WHITE}; font-size: 12px; font-weight: bold; background: transparent; border: none;'
-        )
-        lbl_hs = QLabel('Select which aircraft are displayed')
-        lbl_hs.setStyleSheet(
-            f'color: {SLATE_400}; font-size: 10px; background: transparent; border: none;'
-        )
-        lbl_hs.setWordWrap(True)
-        vh.addWidget(lbl_h)
-        vh.addWidget(lbl_hs)
-
-        div_h = QFrame()
-        div_h.setFixedHeight(1)
-        div_h.setStyleSheet(f'background: {SLATE_700}; border: none; max-height: 1px;')
-        vh.addWidget(div_h)
-
         grid = QGridLayout()
-        grid.setSpacing(4)
-        grid.setContentsMargins(0, 4, 0, 0)
+        grid.setSpacing(3)
+        grid.setContentsMargins(0, 2, 0, 0)
 
         if _UV_FILE.exists():
             with open(_UV_FILE, encoding='utf-8') as _f:
@@ -283,7 +281,7 @@ class HomeTab(QWidget):
         vh.addLayout(grid)
 
         save_row = QHBoxLayout()
-        save_row.setSpacing(10)
+        save_row.setSpacing(6)
         save_btn = QPushButton('Save')
         save_btn.setStyleSheet(_BTN_QSS)
         save_btn.setFixedHeight(26)
@@ -297,13 +295,39 @@ class HomeTab(QWidget):
         save_row.addStretch()
         vh.addLayout(save_row)
 
+
         self._import_btn = QPushButton('Import statusboard')
         self._import_btn.setStyleSheet(_BTN_QSS)
         self._import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._import_btn.setFixedWidth(210)
+        self._import_btn.setFixedWidth(150)
         self._import_btn.setFixedHeight(28)
         self._import_btn.clicked.connect(self._import_statusbord)
-        right.addWidget(self._import_btn)
+        self._help_icon_btn = QToolButton()
+        self._help_icon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._help_icon_btn.setText('?')
+        self._help_icon_btn.setFixedSize(24, 24)
+        self._help_icon_btn.setToolTip('Help')
+        self._help_icon_btn.setStyleSheet("""
+            QToolButton {
+                background: #d6e6f2;
+                color: #0f2a43;
+                border: 1px solid #8fb0c7;
+                border-radius: 12px;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 0px 0px 1px 0px;
+            }
+            QToolButton:hover { background: #e3f0fa; }
+            QToolButton:pressed { background: #bfd5e6; }
+        """)
+        self._help_icon_btn.clicked.connect(self._show_help_popup)
+        import_row = QHBoxLayout()
+        import_row.setContentsMargins(0, 0, 0, 0)
+        import_row.setSpacing(4)
+        import_row.addWidget(self._import_btn)
+        import_row.addWidget(self._help_icon_btn)
+        import_row.addStretch()
+        right.addLayout(import_row)
         right.addSpacing(8)
 
         right.addWidget(heli_frame)
@@ -341,23 +365,24 @@ class HomeTab(QWidget):
         )
         if not path:
             return
-
-        from data.database import import_statusbord
-
         self._import_btn.setEnabled(False)
-        result = import_statusbord(Path(path))
-        self._import_btn.setEnabled(True)
+        self._import_btn.setText('Importing...')
+        self._import_worker = _ImportWorker(Path(path), self)
+        self._import_worker.done.connect(self._on_import_done)
+        self._import_worker.start()
 
+    def _on_import_done(self, result: dict) -> None:
+        self._import_btn.setEnabled(True)
+        self._import_btn.setText('Import statusboard')
         if result['error']:
             QMessageBox.warning(
                 self, 'Import failed',
                 f'Statusboard could not be imported:\n\n{result["error"]}'
             )
             return
-
-        rows       = result['rows']
-        previous   = result.get('previous', 0)
-        copied_to  = result.get('copied_to', '')
+        rows      = result['rows']
+        previous  = result.get('previous', 0)
+        copied_to = result.get('copied_to', '')
         QMessageBox.information(
             self, 'Import successful',
             f'Statusboard imported successfully.\n\n'
@@ -371,6 +396,19 @@ class HomeTab(QWidget):
     # ------------------------------------------------------------------
     # Helikopter-selectie
     # ------------------------------------------------------------------
+
+    def _show_help_popup(self) -> None:
+        QMessageBox.information(
+            self,
+            'Help',
+            'Home panel quick guide:\n\n'
+            'Import statusboard:\n'
+            'Loads a new statusboard Excel file and refreshes all screens after a successful import.\n\n'
+            'Location:\n'
+            'Choose the active work area. This affects which data and defaults are used.\n\n'
+            'Aircraft checkboxes:\n'
+            'Select which aircraft are visible in Overview.'
+        )
 
     def _set_status(self, text: str = '', ttl_ms: int = 0) -> None:
         self._status_clear_token += 1
@@ -401,9 +439,16 @@ class HomeTab(QWidget):
         if mode == self._work_mode:
             return
         self._work_mode = mode
-        # Toon direct de set voor de nieuwe mode in de UI.
         self._load_helis()
-        self._mark_dirty()
+        # Sla alleen de mode op — geen heli-selectie herschrijven, geen settings_saved.
+        # work_mode_changed triggert één _refresh_overview via MainWindow.
+        try:
+            from data.processor import load_user_variables, save_user_variables, set_work_mode
+            uv = load_user_variables()
+            set_work_mode(uv, mode, username=self._username)
+            save_user_variables(uv)
+        except Exception:
+            pass
         self.work_mode_changed.emit(text)
 
     def set_context(self, username: str, work_mode: str) -> None:
@@ -459,21 +504,31 @@ class HomeTab(QWidget):
     # Data
     # ------------------------------------------------------------------
 
-    def update_stats(self, store, sys_vars=None, user_vars=None) -> None:
+    def update_stats(self, store, sys_vars=None, user_vars=None,
+                     df_cal=None, df_cyc=None) -> None:
         try:
             import pandas as pd
-            from data.processor import (
-                prepare_statusbord, get_aircraft_list,
-                get_calendar_inspections, get_cycle_inspections,
-            )
+            from data.processor import get_selected_aircraft
 
-            df_sb   = prepare_statusbord(store.statusbord) if store.statusbord is not None else None
-            ac_list = get_aircraft_list(
-                df_sb, user_vars, username=self._username, work_mode=self._work_mode
-            ) if df_sb is not None else []
-            df_filtered = df_sb[df_sb['Aircraft'].isin(ac_list)] if df_sb is not None else None
-            df_cal  = get_calendar_inspections(df_filtered) if df_filtered is not None else pd.DataFrame()
-            df_cyc  = get_cycle_inspections(df_filtered)  if df_filtered is not None else pd.DataFrame()
+            if df_cal is None or df_cyc is None:
+                # Fallback: volledige berekening (bijv. eerste aanroep zonder cache).
+                from data.processor import (
+                    prepare_statusbord, get_aircraft_list,
+                    get_calendar_inspections, get_cycle_inspections,
+                )
+                df_sb_loc = prepare_statusbord(store.statusbord) if store.statusbord is not None else None
+                ac_list   = get_aircraft_list(
+                    df_sb_loc, user_vars, username=self._username, work_mode=self._work_mode
+                ) if df_sb_loc is not None else []
+                df_f   = df_sb_loc[df_sb_loc['Aircraft'].isin(ac_list)] if df_sb_loc is not None else None
+                df_cal = get_calendar_inspections(df_f) if df_f is not None else pd.DataFrame()
+                df_cyc = get_cycle_inspections(df_f)    if df_f is not None else pd.DataFrame()
+            else:
+                # Snel pad: filter gecachede DataFrames op geselecteerde aircraft.
+                ac_set  = set(get_selected_aircraft(user_vars, username=self._username, work_mode=self._work_mode)) if user_vars else set()
+                ac_list = sorted(ac_set)
+                df_cal  = df_cal[df_cal['Aircraft'].isin(ac_set)] if not df_cal.empty else df_cal
+                df_cyc  = df_cyc[df_cyc['Aircraft'].isin(ac_set)] if not df_cyc.empty else df_cyc
 
             # Kalender: alleen items komende 7 dagen
             if not df_cal.empty and 'Rest' in df_cal.columns:

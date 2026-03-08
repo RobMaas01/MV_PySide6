@@ -137,6 +137,16 @@ def set_selected_aircraft(user_vars: dict, selected: list[str],
             data['Location_1'] = ac in sel_set
 
 
+def get_hide_completed(user_vars: dict, username: str | None = None) -> bool:
+    user_key = _normalize_user(username) or get_current_username()
+    return bool(user_vars.get('hide_completed_by_user', {}).get(user_key, False))
+
+
+def set_hide_completed(user_vars: dict, hide: bool, username: str | None = None) -> None:
+    user_key = _normalize_user(username) or get_current_username()
+    user_vars.setdefault('hide_completed_by_user', {})[user_key] = bool(hide)
+
+
 # ---------------------------------------------------------------------------
 # Statusbord
 # ---------------------------------------------------------------------------
@@ -290,8 +300,9 @@ def get_ecu_serienumber(aircraft: str, ecu_nr: str, df_cfg: pd.DataFrame) -> str
 def save_user_variables(user_vars: dict) -> None:
     """Slaat user variabelen op naar MV_UserVariabelen.json.
 
-    Ook wordt de "last_change" flag ge"update via touch_meta(), zodat
-    andere processen kunnen detecteren dat er iets gewijzigd is.
+    Raakt last_change.txt NIET aan — gebruikersinstellingen (heli-selectie,
+    bijzonderheden, completed-inspections) zijn lokaal en triggeren geen
+    overview-refresh bij andere gebruikers.
     """
     path = _settings_dir() / 'MV_UserVariabelen.json'
     with open(path, 'w', encoding='utf-8') as f:
