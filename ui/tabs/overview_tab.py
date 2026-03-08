@@ -52,6 +52,7 @@ NEG_FG       = '#1e293b'   # zwart
 DONE_BG      = '#d8dee6'   # grijs (uitgevoerde inspectie)
 DONE_ALT     = '#cfd6df'   # grijs alternerend
 DONE_FG      = '#5f6b7a'   # gedempte tekst
+_NEG_ROLE    = int(Qt.ItemDataRole.UserRole) + 1
 
 INFO_W       = 88       # breedte info-kaart
 POPLAN_W     = 48       # breedte Po Plan-kolom
@@ -732,6 +733,7 @@ def _build_table(df: pd.DataFrame, columns: list, headers: list,
                     cell_neg = float(str(val)) < 0
                 except (ValueError, TypeError):
                     pass
+                item.setData(_NEG_ROLE, cell_neg)
                 if is_done:
                     item.setBackground(QBrush(done_bg[r % 2]))
                 elif cell_neg:
@@ -740,6 +742,7 @@ def _build_table(df: pd.DataFrame, columns: list, headers: list,
                 else:
                     item.setBackground(QBrush(row_bg[r % 2]))
             else:
+                item.setData(_NEG_ROLE, False)
                 item.setBackground(QBrush(done_bg[r % 2] if is_done else row_bg[r % 2]))
             tbl.setItem(r, c, item)
 
@@ -752,7 +755,7 @@ def _build_table(df: pd.DataFrame, columns: list, headers: list,
             if not key:
                 return
             done = bool(completed_keys and key in completed_keys)
-            on_row_clicked(key, done)
+            on_row_clicked(tbl, row, key, done)
         tbl.cellDoubleClicked.connect(_clicked)
 
     return tbl
@@ -1007,18 +1010,40 @@ class OverviewTab(QWidget):
         scroll.setWidget(self._container)
         layout.addWidget(scroll)
 
-    def _save_overview_state(self) -> None:
+    def _save_overview_state(self, row_key: str, mark_done: bool) -> None:
         from data.processor import load_user_variables, save_user_variables
         try:
             current = load_user_variables()
         except Exception:
             current = {}
         ov = current.setdefault('overview', {})
-        ov['completed_inspections'] = sorted(self._completed_keys)
+        raw_done = ov.get('completed_inspections', [])
+        done_set = set(raw_done if isinstance(raw_done, list) else [])
+        if mark_done:
+            done_set.add(row_key)
+        else:
+            done_set.discard(row_key)
+        ov['completed_inspections'] = sorted(done_set)
         ov['statusbord_fingerprint'] = self._statusbord_fp
         save_user_variables(current)
+        self._completed_keys = done_set
 
-    def _on_inspection_clicked(self, row_key: str, is_done: bool) -> None:
+    def _paint_inspection_row(self, tbl: QTableWidget, row: int, mark_done: bool) -> None:
+        bg = QColor(DONE_BG if row % 2 == 0 else DONE_ALT) if mark_done else QColor(TBL_BG if row % 2 == 0 else TBL_ALT)
+        fg = QColor(DONE_FG if mark_done else TBL_TEXT)
+        for c in range(tbl.columnCount()):
+            item = tbl.item(row, c)
+            if item is None:
+                continue
+            item.setBackground(QBrush(bg))
+            # herstel NEG-styling voor Rest-cellen op basis van opgeslagen metadata
+            if not mark_done and bool(item.data(_NEG_ROLE)):
+                item.setForeground(QBrush(QColor(NEG_FG)))
+                item.setBackground(QBrush(QColor(NEG_BG)))
+                continue
+            item.setForeground(QBrush(fg))
+
+    def _on_inspection_clicked(self, tbl: QTableWidget, row: int, row_key: str, is_done: bool) -> None:
         if is_done:
             reply = QMessageBox.question(
                 self,
@@ -1028,20 +1053,29 @@ class OverviewTab(QWidget):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-            self._completed_keys.discard(row_key)
+            mark_done = False
         else:
+            mark_done = True
+
+        # Eerst direct UI + memory updaten voor snelle feedback.
+        if mark_done:
             self._completed_keys.add(row_key)
+        else:
+            self._completed_keys.discard(row_key)
+        self._paint_inspection_row(tbl, row, mark_done)
 
         try:
-            self._save_overview_state()
+            # Daarna laatste JSON ophalen en alleen deze toggle mergen/schrijven.
+            self._save_overview_state(row_key, mark_done)
         except Exception as exc:
+            # Revert UI/memory als wegschrijven faalt.
+            if mark_done:
+                self._completed_keys.discard(row_key)
+            else:
+                self._completed_keys.add(row_key)
+            self._paint_inspection_row(tbl, row, not mark_done)
             QMessageBox.warning(self, 'Save failed', str(exc))
             return
-
-        # Render direct opnieuw met actuele grijs-markering.
-        win = self.window()
-        if hasattr(win, '_refresh_overview'):
-            win._refresh_overview()
 
     def load_data(self, store, sys_vars: dict, user_vars: dict) -> None:
         from data.processor import (
