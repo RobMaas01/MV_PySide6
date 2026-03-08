@@ -6,7 +6,7 @@ import logging
 from datetime import date
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
@@ -235,7 +235,7 @@ class HomeTab(QWidget):
         self._mode_combo = QComboBox()
         self._mode_combo.addItems(['B1', 'B2', 'B3', 'BVP'])
         self._mode_combo.setCurrentText(self._work_mode)
-        self._mode_combo.currentTextChanged.connect(lambda t: self.work_mode_changed.emit(t))
+        self._mode_combo.currentTextChanged.connect(self._on_mode_changed)
         mode_row.addWidget(mode_lbl)
         mode_row.addWidget(self._mode_combo, stretch=1)
         vh.addLayout(mode_row)
@@ -276,6 +276,7 @@ class HomeTab(QWidget):
             for i, name in enumerate(helis):
                 cb = QCheckBox(name)
                 cb.setStyleSheet(_CB_QSS)
+                cb.stateChanged.connect(self._on_selection_changed)
                 self._heli_checkboxes[name] = cb
                 grid.addWidget(cb, i % n_rows, i // n_rows)
 
@@ -371,12 +372,20 @@ class HomeTab(QWidget):
     # Helikopter-selectie
     # ------------------------------------------------------------------
 
+    def _on_selection_changed(self) -> None:
+        self._heli_status.setText('')
+
+    def _on_mode_changed(self, text: str) -> None:
+        self._heli_status.setText('')
+        self.work_mode_changed.emit(text)
+
     def set_context(self, username: str, work_mode: str) -> None:
         self._username = (username or '').strip()
         self._work_mode = str(work_mode or 'B1').upper()
         self._mode_combo.blockSignals(True)
         self._mode_combo.setCurrentText(self._work_mode)
         self._mode_combo.blockSignals(False)
+        self._heli_status.setText('')
         self._load_helis()
 
     def _load_helis(self) -> None:
@@ -391,6 +400,7 @@ class HomeTab(QWidget):
             cb.setChecked(name in selected)
         scope = 'personal' if self._work_mode == 'BVP' else 'shared group'
         self._ctx_lbl.setText(f'Context: {self._work_mode} ({scope})')
+        self._heli_status.setText('')
 
     def _save_helis(self) -> None:
         from data.processor import load_user_variables, save_user_variables, set_selected_aircraft
@@ -399,6 +409,7 @@ class HomeTab(QWidget):
         set_selected_aircraft(uv, selected, username=self._username, work_mode=self._work_mode)
         save_user_variables(uv)
         self._heli_status.setText('v  Saved')
+        QTimer.singleShot(2500, lambda: self._heli_status.setText(''))
         self.settings_saved.emit()
 
     # ------------------------------------------------------------------
