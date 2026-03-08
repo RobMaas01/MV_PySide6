@@ -769,7 +769,14 @@ def _build_info_card(aircraft: str, hrs: float,
                                 traceback.format_exc())
 
     def open_specials():
-        dlg = _SpecialsDialog(aircraft, user_vars, card.window())
+        # Laad vlak voor openen de nieuwste user_vars van schijf
+        # zodat de dialoog niet afhankelijk is van de 5s polling-cyclus.
+        try:
+            from data.processor import load_user_variables
+            latest_user_vars = load_user_variables()
+        except Exception:
+            latest_user_vars = user_vars
+        dlg = _SpecialsDialog(aircraft, latest_user_vars, card.window())
         if dlg.exec() and hasattr(card.window(), '_refresh_overview'):
             card.window()._refresh_overview()
 
