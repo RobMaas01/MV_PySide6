@@ -41,6 +41,7 @@ _TAB_QSS = f"""
     QTabWidget::pane {{
         border: none;
         background: {SLATE_900};
+        padding-top: 12px;
     }}
     QTabBar {{
         background: {SLATE_900};
@@ -203,7 +204,6 @@ class MainWindow(QMainWindow):
         if mode == self._work_mode:
             return
         self._work_mode = mode
-        self._home_tab.set_context(self._username, self._work_mode)
         self._refresh_overview()
 
     # ------------------------------------------------------------------
@@ -258,9 +258,7 @@ class MainWindow(QMainWindow):
                 df_sb   = prepare_statusbord(store.statusbord)
                 df_cal  = get_calendar_inspections(df_sb)
                 df_cyc  = get_cycle_inspections(df_sb)
-                ac_list = get_aircraft_list(
-                    df_sb, user_vars, username=self._username, work_mode=self._work_mode
-                )
+                ac_list = get_aircraft_list(df_sb)
                 self._planning_tab.load_data(ac_list, df_cal, df_cyc, sys_vars)
         except Exception as exc:
             self._status_bar.showMessage(f'  Load error: {exc}')
@@ -284,7 +282,6 @@ class MainWindow(QMainWindow):
             )
             sys_vars  = load_system_variables()
             user_vars = load_user_variables()
-            self._home_tab.set_context(self._username, self._work_mode)
             self._home_tab.update_stats(self._store, sys_vars, user_vars)
             self._overview_tab.load_data(
                 self._store, sys_vars, user_vars,
@@ -295,9 +292,7 @@ class MainWindow(QMainWindow):
                 df_sb   = prepare_statusbord(self._store.statusbord)
                 df_cal  = get_calendar_inspections(df_sb)
                 df_cyc  = get_cycle_inspections(df_sb)
-                ac_list = get_aircraft_list(
-                    df_sb, user_vars, username=self._username, work_mode=self._work_mode
-                )
+                ac_list = get_aircraft_list(df_sb)
                 self._planning_tab.load_data(ac_list, df_cal, df_cyc, sys_vars)
         except Exception as exc:
             self._status_bar.showMessage(f'  Refresh error: {exc}')

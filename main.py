@@ -32,6 +32,7 @@ def main() -> None:
     app.setWindowIcon(QIcon(str(Path(__file__).parent / 'assets' / 'NH90_taskbar.PNG')))
 
     window = MainWindow()
+    window.setWindowIcon(QIcon(str(Path(__file__).parent / 'assets' / 'NH90_taskbar.PNG')))
     window.showMaximized()
     window.raise_()
     window.activateWindow()

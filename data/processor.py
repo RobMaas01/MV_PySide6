@@ -296,8 +296,6 @@ def save_user_variables(user_vars: dict) -> None:
     path = _settings_dir() / 'MV_UserVariabelen.json'
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(user_vars, f, ensure_ascii=False, indent=2)
-    # flag bijwerken
-    touch_meta()
 
 
 # ---------------------------------------------------------------------------

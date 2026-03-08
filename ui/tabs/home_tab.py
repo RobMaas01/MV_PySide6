@@ -258,12 +258,6 @@ class HomeTab(QWidget):
         vh.addWidget(lbl_h)
         vh.addWidget(lbl_hs)
 
-        self._ctx_lbl = QLabel('')
-        self._ctx_lbl.setStyleSheet(
-            f'color: {SLATE_400}; font-size: 10px; background: transparent; border: none;'
-        )
-        vh.addWidget(self._ctx_lbl)
-
         div_h = QFrame()
         div_h.setFixedHeight(1)
         div_h.setStyleSheet(f'background: {SLATE_700}; border: none; max-height: 1px;')
@@ -400,7 +394,7 @@ class HomeTab(QWidget):
     def _on_selection_changed(self) -> None:
         if self._suspend_selection_events:
             return
-        self._mark_dirty()
+        self._dirty = True
 
     def _on_mode_changed(self, text: str) -> None:
         mode = str(text)
@@ -433,8 +427,6 @@ class HomeTab(QWidget):
         for name, cb in self._heli_checkboxes.items():
             cb.setChecked(name in selected)
         self._suspend_selection_events = False
-        scope = 'personal' if self._work_mode == 'BVP' else 'shared group'
-        self._ctx_lbl.setText(f'Location: {self._work_mode} ({scope})')
         self._set_status('')
 
     def _save_helis(self) -> None:
