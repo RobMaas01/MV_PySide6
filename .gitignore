@@ -28,3 +28,9 @@ Thumbs.db
 # IDE
 .vscode/
 *.pyc
+
+# PyInstaller build artefacten
+dist/
+build/
+*.spec
+build_dist.bat
