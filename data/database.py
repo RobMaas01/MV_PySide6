@@ -9,7 +9,6 @@ Tabel-namen komen overeen met de oorspronkelijke Excel-bestandsnamen:
   statusbord, configuratie, mis, 3ms
 """
 import logging
-import os
 import shutil
 import sqlite3
 import sys
@@ -34,32 +33,25 @@ log = logging.getLogger(__name__)
 
 def db_path() -> Path:
     """
-    Altijd: <root>/datasource/mv_data.db
-    Dev:    <projectroot>/datasource/
-    Frozen: %LOCALAPPDATA%/MV3/datasource/
+    Dev:    <projectroot>/datasource/mv_data.db
+    Frozen: <exe_dir>/datasource/mv_data.db  (gedeelde map, zelfde voor alle gebruikers)
+
+    Bij eerste start wordt de db geseeded vanuit de bundel (_MEIPASS).
     """
     if getattr(sys, 'frozen', False):
-        local = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local')))
-        root = local / 'MV3'
-        # Bronnen voor eenmalige seeding (op volgorde van voorkeur)
-        seed_sources = [
-            Path(sys.executable).parent / 'datasource' / 'mv_data.db',   # legacy
-            Path(getattr(sys, '_MEIPASS', '')) / 'datasource' / 'mv_data.db',  # bundled
-        ]
+        root = Path(sys.executable).parent
+        bundled = Path(getattr(sys, '_MEIPASS', '')) / 'datasource' / 'mv_data.db'
     else:
         root = Path(__file__).parent.parent
-        seed_sources = []
+        bundled = None
     p = root / 'datasource'
     p.mkdir(parents=True, exist_ok=True)
     db = p / 'mv_data.db'
-    if not db.exists():
-        for src in seed_sources:
-            if src.exists():
-                try:
-                    shutil.copy2(src, db)
-                    break
-                except OSError:
-                    pass
+    if not db.exists() and bundled and bundled.exists():
+        try:
+            shutil.copy2(bundled, db)
+        except OSError:
+            pass
     return db
 
 
