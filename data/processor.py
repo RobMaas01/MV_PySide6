@@ -39,17 +39,22 @@ def _settings_dir() -> Path:
         target = local / 'MV3' / 'settings'
         target.mkdir(parents=True, exist_ok=True)
 
-        # Eenmalige migratie vanaf oude locatie naast .exe.
-        legacy = Path(sys.executable).parent / 'settings'
-        if legacy.exists():
-            for name in ('MV_UserVariabelen.json', 'MV_SystemVariabelen.json'):
-                dst = target / name
-                src = legacy / name
-                if not dst.exists() and src.exists():
-                    try:
-                        shutil.copy2(src, dst)
-                    except OSError:
-                        pass
+        # Eenmalige seeding: legacy naast .exe → daarna bundled in _MEIPASS
+        seed_dirs = [
+            Path(sys.executable).parent / 'settings',
+            Path(getattr(sys, '_MEIPASS', '')) / 'settings',
+        ]
+        for name in ('MV_UserVariabelen.json', 'MV_SystemVariabelen.json'):
+            dst = target / name
+            if not dst.exists():
+                for sdir in seed_dirs:
+                    src = sdir / name
+                    if src.exists():
+                        try:
+                            shutil.copy2(src, dst)
+                        except OSError:
+                            pass
+                        break
         return target
     return Path(__file__).parent.parent / 'settings'
 

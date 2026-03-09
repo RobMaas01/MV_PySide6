@@ -41,18 +41,25 @@ def db_path() -> Path:
     if getattr(sys, 'frozen', False):
         local = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local')))
         root = local / 'MV3'
-        legacy_db = Path(sys.executable).parent / 'datasource' / 'mv_data.db'
+        # Bronnen voor eenmalige seeding (op volgorde van voorkeur)
+        seed_sources = [
+            Path(sys.executable).parent / 'datasource' / 'mv_data.db',   # legacy
+            Path(getattr(sys, '_MEIPASS', '')) / 'datasource' / 'mv_data.db',  # bundled
+        ]
     else:
         root = Path(__file__).parent.parent
-        legacy_db = None
+        seed_sources = []
     p = root / 'datasource'
     p.mkdir(parents=True, exist_ok=True)
     db = p / 'mv_data.db'
-    if legacy_db is not None and not db.exists() and legacy_db.exists():
-        try:
-            shutil.copy2(legacy_db, db)
-        except OSError:
-            pass
+    if not db.exists():
+        for src in seed_sources:
+            if src.exists():
+                try:
+                    shutil.copy2(src, db)
+                    break
+                except OSError:
+                    pass
     return db
 
 
