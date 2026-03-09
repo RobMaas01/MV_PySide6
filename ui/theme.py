@@ -7,11 +7,11 @@ Zelfde kleurpalet als MV2 (Tailwind slate/blue).
 # Kleurconstanten
 # ---------------------------------------------------------------------------
 
-SLATE_900 = '#0f172a'
-SLATE_800 = '#1e293b'
-SLATE_700 = '#334155'
-SLATE_600 = '#475569'
-SLATE_400 = '#94a3b8'
+SLATE_900 = '#26374e'
+SLATE_800 = '#364a65'
+SLATE_700 = '#4b627f'
+SLATE_600 = '#6b83a1'
+SLATE_400 = '#c0ccda'
 SLATE_200 = '#e2e8f0'
 SLATE_50  = '#f8fafc'
 BLUE_700  = '#1d4ed8'
@@ -49,6 +49,24 @@ APP_QSS = f"""
         color: {SLATE_400};
         font-size: 11px;
         border-top: 1px solid {SLATE_700};
+    }}
+    QMessageBox {{
+        background-color: {SLATE_800};
+    }}
+    QMessageBox QLabel {{
+        color: {WHITE};
+        background: transparent;
+    }}
+    QMessageBox QPushButton {{
+        background-color: #c7d8e6;
+        color: #1a1a1a;
+        border: 1px solid #8aa7bf;
+        border-radius: 4px;
+        padding: 4px 10px;
+        min-width: 70px;
+    }}
+    QMessageBox QPushButton:hover {{
+        background-color: #d6e3ee;
     }}
 """
 

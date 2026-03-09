@@ -4,6 +4,7 @@ Zet ruwe DataStore-DataFrames om naar kant-en-klare weergave-DataFrames.
 """
 import json
 import os
+import shutil
 import sys
 import time
 from contextlib import contextmanager
@@ -33,9 +34,23 @@ _WORK_MODE_ALIASES = {
 
 def _settings_dir() -> Path:
     if getattr(sys, 'frozen', False):
-        # Bij een frozen app is sys._MEIPASS read-only (tijdelijke bundel-map).
-        # Schrijfbare bestanden (settings) staan naast het .exe-bestand.
-        return Path(sys.executable).parent / 'settings'
+        # Frozen runtime-data lokaal op client bewaren voor snelle startup.
+        local = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local')))
+        target = local / 'MV3' / 'settings'
+        target.mkdir(parents=True, exist_ok=True)
+
+        # Eenmalige migratie vanaf oude locatie naast .exe.
+        legacy = Path(sys.executable).parent / 'settings'
+        if legacy.exists():
+            for name in ('MV_UserVariabelen.json', 'MV_SystemVariabelen.json'):
+                dst = target / name
+                src = legacy / name
+                if not dst.exists() and src.exists():
+                    try:
+                        shutil.copy2(src, dst)
+                    except OSError:
+                        pass
+        return target
     return Path(__file__).parent.parent / 'settings'
 
 

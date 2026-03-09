@@ -31,6 +31,7 @@ from ui.tabs.overview_tab import (
 
 AMBER_BG  = '#f5e17a'
 ORANGE_BG = '#f5a85e'
+PLAN_ROW_H = 17
 
 _EXPORT_BTN_QSS = """
     QPushButton {
@@ -540,6 +541,7 @@ class PlanningTab(QWidget):
         ug.addStretch()
         top_row.addWidget(usage_group, stretch=1)
         main.addWidget(top_container)
+        main.addSpacing(10)
 
         # Info bar
         info_bar = QWidget()
@@ -590,19 +592,22 @@ class PlanningTab(QWidget):
         self._tbl = QTableView()
         self._tbl.setStyleSheet(
             _TBL_QSS
-            + f'QTableView {{ color: {TBL_TEXT}; gridline-color: {TBL_BDR}; }}'
-            + f'QTableView::item {{ color: {TBL_TEXT}; background-color: {TBL_BG}; padding-left: 4px; padding-right: 4px; }}'
+            + f'QTableView {{ color: {TBL_TEXT}; gridline-color: {TBL_BDR}; font-size: 9px; }}'
+            + f'QTableView::item {{ color: {TBL_TEXT}; background-color: {TBL_BG}; font-size: 9px; padding-left: 4px; padding-right: 4px; }}'
         )
         self._tbl.setModel(self._proxy)
         self._tbl.verticalHeader().setVisible(False)
-        self._tbl.verticalHeader().setDefaultSectionSize(18)
+        self._tbl.verticalHeader().setDefaultSectionSize(PLAN_ROW_H)
+        self._tbl.verticalHeader().setMinimumSectionSize(1)
         self._tbl.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self._tbl.setWordWrap(False)
         self._tbl.setAlternatingRowColors(False)
         self._tbl.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._tbl.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._tbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._tbl.setSortingEnabled(True)
+        self._apply_row_heights()
 
         self._hdr = FilterHeaderView(self._proxy, self._tbl)
         self._hdr.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -798,6 +803,8 @@ class PlanningTab(QWidget):
     def _populate_table(self, df: pd.DataFrame):
         self._proxy.clear_all_filters()
         self._model.load(df)
+        self._apply_row_heights()
+        QTimer.singleShot(0, self._apply_row_heights)
         if df.empty:
             self._lbl_count.setText('No inspections found')
             self._btn_export.setEnabled(False)
@@ -808,6 +815,11 @@ class PlanningTab(QWidget):
             self._last_col_signature = sig
         self._update_count()
         self._btn_export.setEnabled(True)
+
+    def _apply_row_heights(self):
+        self._tbl.verticalHeader().setDefaultSectionSize(PLAN_ROW_H)
+        for r in range(self._proxy.rowCount()):
+            self._tbl.setRowHeight(r, PLAN_ROW_H)
 
     def _update_count(self):
         aircraft = self._combo_ac.currentText()

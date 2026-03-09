@@ -23,7 +23,7 @@ _CB_QSS = f"""
     }}
     QCheckBox::indicator {{
         width: 12px; height: 12px; border-radius: 3px;
-        border: 1px solid {SLATE_700}; background: #0f172a;
+        border: 1px solid {SLATE_700}; background: #2a3a52;
     }}
     QCheckBox::indicator:checked {{
         background: #1d4ed8; border: 1px solid #3b82f6;
@@ -64,8 +64,8 @@ def _stat_card(title: str, init_value: str = '-', subtitle: str = '') -> tuple:
     card = QFrame()
     card.setStyleSheet("""
         QFrame {
-            background: rgba(15, 30, 60, 210);
-            border: 1px solid rgba(100, 140, 200, 80);
+            background: rgba(48, 67, 95, 220);
+            border: 1px solid rgba(140, 176, 224, 110);
             border-radius: 10px;
         }
     """)
@@ -243,8 +243,8 @@ class HomeTab(QWidget):
         heli_frame.setFixedWidth(176)
         heli_frame.setStyleSheet("""
             QFrame {
-                background: rgba(30, 46, 72, 220);
-                border: 1px solid rgba(132, 176, 232, 150);
+                background: rgba(52, 72, 102, 224);
+                border: 1px solid rgba(152, 192, 232, 170);
                 border-radius: 8px;
             }
         """)
@@ -396,8 +396,8 @@ class HomeTab(QWidget):
         dlg.setFixedWidth(560)
         dlg.setStyleSheet("""
             QDialog {
-                background: rgba(30, 46, 72, 220);
-                border: 1px solid rgba(164, 204, 240, 210);
+                background: rgba(56, 78, 110, 230);
+                border: 1px solid rgba(188, 218, 244, 220);
                 border-radius: 8px;
             }
             QLabel {
@@ -415,11 +415,11 @@ class HomeTab(QWidget):
         body.setObjectName('helpBody')
         body.setStyleSheet("""
             QWidget#helpBody {
-                background: rgba(30, 46, 72, 220);
-                border-top: 1px solid rgba(214, 235, 252, 70);
-                border-left: 1px solid rgba(214, 235, 252, 70);
-                border-right: 1px solid rgba(214, 235, 252, 70);
-                border-bottom: 1px solid rgba(214, 235, 252, 70);
+                background: rgba(56, 78, 110, 230);
+                border-top: 1px solid rgba(214, 235, 252, 110);
+                border-left: 1px solid rgba(214, 235, 252, 110);
+                border-right: 1px solid rgba(214, 235, 252, 110);
+                border-bottom: 1px solid rgba(214, 235, 252, 110);
                 border-top-left-radius: 8px;
                 border-top-right-radius: 8px;
                 border-bottom-left-radius: 8px;
@@ -603,4 +603,3 @@ class HomeTab(QWidget):
 
         except Exception:
             logging.warning('update_stats mislukt', exc_info=True)
-

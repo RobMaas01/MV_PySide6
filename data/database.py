@@ -9,6 +9,7 @@ Tabel-namen komen overeen met de oorspronkelijke Excel-bestandsnamen:
   statusbord, configuratie, mis, 3ms
 """
 import logging
+import os
 import shutil
 import sqlite3
 import sys
@@ -35,15 +36,24 @@ def db_path() -> Path:
     """
     Altijd: <root>/datasource/mv_data.db
     Dev:    <projectroot>/datasource/
-    Frozen: <exe_dir>/datasource/  (blijft staan bij update)
+    Frozen: %LOCALAPPDATA%/MV3/datasource/
     """
     if getattr(sys, 'frozen', False):
-        root = Path(sys.executable).parent
+        local = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local')))
+        root = local / 'MV3'
+        legacy_db = Path(sys.executable).parent / 'datasource' / 'mv_data.db'
     else:
         root = Path(__file__).parent.parent
+        legacy_db = None
     p = root / 'datasource'
-    p.mkdir(exist_ok=True)
-    return p / 'mv_data.db'
+    p.mkdir(parents=True, exist_ok=True)
+    db = p / 'mv_data.db'
+    if legacy_db is not None and not db.exists() and legacy_db.exists():
+        try:
+            shutil.copy2(legacy_db, db)
+        except OSError:
+            pass
+    return db
 
 
 # ---------------------------------------------------------------------------

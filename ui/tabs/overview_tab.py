@@ -30,10 +30,12 @@ from ui.theme import SLATE_400, SLATE_600, SLATE_700, SLATE_800, SLATE_900, WHIT
 # ---------------------------------------------------------------------------
 # Constanten
 # ---------------------------------------------------------------------------
-N_ROWS       = 14
-ROW_H        = 10
-HDR_H        = 28       # 2-regelige kolomkop
-TBL_H        = N_ROWS * ROW_H + HDR_H + 4   # ~172 px
+N_ROWS       = 8
+HDR_H        = 20       # compactere kolomkop, meer ruimte voor rijen
+TBL_H        = 172      # vaste blokhoogte behouden
+_ROW_SPACE   = max(0, TBL_H - HDR_H - 4)
+ROW_H        = max(8, _ROW_SPACE // N_ROWS)
+ROW_EXTRA    = _ROW_SPACE % N_ROWS
 
 AC_CARD_COLOR = '#1c3e72'   # staal blauw  — info-kaart & blok-rand
 AC_CARD_BDR   = '#2b54a0'   # staal blauw rand
@@ -121,7 +123,7 @@ _BTN_QSS = f"""
 """
 
 _DLG_QSS = f"""
-    QDialog {{ background-color: {SLATE_900}; color: {WHITE}; font-size: 13px; }}
+    QDialog {{ background-color: {SLATE_800}; color: {WHITE}; font-size: 13px; border: 1px solid {SLATE_600}; }}
     QLabel  {{ color: {WHITE}; background: transparent; }}
     QTableWidget {{
         background-color: {TBL_BG};
@@ -683,11 +685,17 @@ def _build_table(df: pd.DataFrame, columns: list, headers: list,
     tbl.setItemDelegate(_BgDelegate(tbl))
     tbl.setFixedHeight(TBL_H)
     tbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    tbl.setWordWrap(False)
 
     hdr = tbl.horizontalHeader()
     hdr.setHighlightSections(False)
     hdr.setFixedHeight(HDR_H)
     hdr.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    vhdr = tbl.verticalHeader()
+    vhdr.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+    vhdr.setMinimumSectionSize(1)
+    vhdr.setDefaultSectionSize(ROW_H)
 
     stretch_col = -1
     for i, (mode, width) in enumerate(col_widths):
@@ -718,7 +726,7 @@ def _build_table(df: pd.DataFrame, columns: list, headers: list,
     row_bg = [QColor(TBL_BG), QColor(TBL_ALT)]
     done_bg = [QColor(DONE_BG), QColor(DONE_ALT)]
     for r, (_, row) in enumerate(df.head(max_rows).iterrows()):
-        tbl.setRowHeight(r, ROW_H)
+        tbl.setRowHeight(r, ROW_H + (1 if r < ROW_EXTRA else 0))
         row_key = row_keys[r] if row_keys and r < len(row_keys) else ''
         is_done = bool(row_key and completed_keys and row_key in completed_keys)
         for c, col in enumerate(columns):
