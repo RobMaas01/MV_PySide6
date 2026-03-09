@@ -9,7 +9,6 @@ Tabel-namen komen overeen met de oorspronkelijke Excel-bestandsnamen:
   statusbord, configuratie, mis, 3ms
 """
 import logging
-import shutil
 import sqlite3
 import sys
 from pathlib import Path
@@ -35,24 +34,14 @@ def db_path() -> Path:
     """
     Dev:    <projectroot>/datasource/mv_data.db
     Frozen: <exe_dir>/datasource/mv_data.db  (gedeelde map, zelfde voor alle gebruikers)
-
-    Bij eerste start wordt de db geseeded vanuit de bundel (_MEIPASS).
     """
     if getattr(sys, 'frozen', False):
         root = Path(sys.executable).parent
-        bundled = Path(getattr(sys, '_MEIPASS', '')) / 'datasource' / 'mv_data.db'
     else:
         root = Path(__file__).parent.parent
-        bundled = None
     p = root / 'datasource'
     p.mkdir(parents=True, exist_ok=True)
-    db = p / 'mv_data.db'
-    if not db.exists() and bundled and bundled.exists():
-        try:
-            shutil.copy2(bundled, db)
-        except OSError:
-            pass
-    return db
+    return p / 'mv_data.db'
 
 
 # ---------------------------------------------------------------------------
