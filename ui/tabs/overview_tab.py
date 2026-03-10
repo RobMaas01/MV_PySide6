@@ -518,148 +518,6 @@ class _SpecialsDialog(QDialog):
         self._is_dirty = True
         self._reset_button.setEnabled(True)
 
-# ---------------------------------------------------------------------------
-# ECU-dialoog (ECU 1 / ECU 2 switcher)
-# ---------------------------------------------------------------------------
-
-_ECU_COL_WIDTHS = [('F', 80), ('F', 110), ('S', 0), ('F', 90), ('F', 70)]
-
-_TOGGLE_ACTIVE = (
-    'QPushButton { background: #1d4ed8; color: white; border: 1px solid #3b82f6; '
-    'padding: 3px 16px; font-size: 11px; font-weight: bold; border-radius: 0; }'
-)
-_TOGGLE_INACTIVE = (
-    'QPushButton { background: #334155; color: #94a3b8; border: 1px solid #475569; '
-    'padding: 3px 16px; font-size: 11px; border-radius: 0; }'
-    'QPushButton:hover { background: #3e5068; color: white; }'
-)
-
-
-class _EcuDialog(QDialog):
-    def __init__(self, aircraft: str, df_cyc, df_cfg, sys_vars: dict, parent=None):
-        super().__init__(parent)
-        self.setWindowFlags(
-            Qt.WindowType.Dialog |
-            Qt.WindowType.WindowTitleHint |
-            Qt.WindowType.WindowCloseButtonHint
-        )
-        self.setWindowTitle(f'ECU  —  {aircraft}')
-        self.setStyleSheet(_DLG_QSS)
-        self.setMinimumSize(500, 380)
-        self.resize(640, 460)
-
-        self._aircraft   = aircraft
-        self._df_cyc     = df_cyc
-        self._df_cfg     = df_cfg
-        self._sys_vars   = sys_vars
-        self._current_df = pd.DataFrame()
-        self._current_ecu = '1'
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(10)
-
-        # Toggle-rij
-        toggle_row = QHBoxLayout()
-        toggle_row.setSpacing(0)
-        self._btn1 = QPushButton('ECU 1')
-        self._btn2 = QPushButton('ECU 2')
-        self._btn1.clicked.connect(lambda: self._switch('1'))
-        self._btn2.clicked.connect(lambda: self._switch('2'))
-        toggle_row.addWidget(self._btn1)
-        toggle_row.addWidget(self._btn2)
-        toggle_row.addStretch()
-        layout.addLayout(toggle_row)
-
-        self._title_lbl = QLabel()
-        layout.addWidget(self._title_lbl)
-
-        self._tbl_holder = QWidget()
-        self._tbl_layout = QVBoxLayout(self._tbl_holder)
-        self._tbl_layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._tbl_holder, stretch=1)
-
-        btn_row = QHBoxLayout()
-        btn_xls = QPushButton(_excel_icon(), '')
-        btn_xls.setStyleSheet(_BTN_QSS)
-        btn_xls.setFixedSize(36, 32)
-        btn_xls.setIconSize(QSize(24, 24))
-        btn_xls.clicked.connect(self._export_both)
-        btn_row.addWidget(btn_xls)
-        btn_row.addStretch()
-        close_btn = QPushButton('Close')
-        close_btn.setStyleSheet(_BTN_QSS)
-        close_btn.setFixedHeight(32)
-        close_btn.setFixedWidth(90)
-        close_btn.clicked.connect(self.accept)
-        btn_row.addWidget(close_btn)
-        layout.addLayout(btn_row)
-
-        self._switch('1')
-
-    def _switch(self, ecu_nr: str):
-        import traceback
-        from data.processor import get_ecu_status, get_ecu_serienumber
-
-        self._btn1.setStyleSheet(_TOGGLE_ACTIVE if ecu_nr == '1' else _TOGGLE_INACTIVE)
-        self._btn2.setStyleSheet(_TOGGLE_ACTIVE if ecu_nr == '2' else _TOGGLE_INACTIVE)
-
-        try:
-            df = get_ecu_status(self._aircraft, ecu_nr, self._df_cyc, self._sys_vars)
-            sn = get_ecu_serienumber(self._aircraft, ecu_nr, self._df_cfg) if self._df_cfg is not None else 'n/b'
-        except Exception:
-            traceback.print_exc()
-            return
-
-        self._current_df  = df
-        self._current_ecu = ecu_nr
-
-        self._title_lbl.setText(f'<b style="font-size:13px">{self._aircraft}  ECU{ecu_nr}  SN {sn}</b>')
-
-        # Verwijder oude tabel
-        while self._tbl_layout.count():
-            item = self._tbl_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        tbl = _build_table(df, list(df.columns), list(df.columns),
-                           col_widths=_ECU_COL_WIDTHS, rest_col=None, max_rows=60)
-        tbl.setMinimumHeight(300)
-        tbl.setMaximumHeight(16777215)
-        tbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        tbl.horizontalHeader().setFixedHeight(_DLG_HDR_H)
-        for r in range(tbl.rowCount()):
-            tbl.setRowHeight(r, _DLG_ROW_H)
-        self._tbl_layout.addWidget(tbl)
-
-    def _export_both(self):
-        import os, tempfile
-        from data.processor import get_ecu_status, get_ecu_serienumber
-
-        try:
-            df1 = get_ecu_status(self._aircraft, '1', self._df_cyc, self._sys_vars)
-            df2 = get_ecu_status(self._aircraft, '2', self._df_cyc, self._sys_vars)
-            sn1 = get_ecu_serienumber(self._aircraft, '1', self._df_cfg) if self._df_cfg is not None else 'n/b'
-            sn2 = get_ecu_serienumber(self._aircraft, '2', self._df_cfg) if self._df_cfg is not None else 'n/b'
-        except Exception as exc:
-            QMessageBox.warning(self, 'Export error', str(exc))
-            return
-
-        def _tab(ecu_nr, sn):
-            return f'{self._aircraft} ECU{ecu_nr} SN {sn}'[:31]
-
-        try:
-            tmp = tempfile.NamedTemporaryFile(
-                suffix='.xlsx', prefix=f'ECU_{self._aircraft}_', delete=False)
-            tmp.close()
-            with pd.ExcelWriter(tmp.name, engine='openpyxl') as writer:
-                df1.to_excel(writer, index=False, sheet_name=_tab('1', sn1))
-                df2.to_excel(writer, index=False, sheet_name=_tab('2', sn2))
-                _style_excel_sheet(writer.sheets[_tab('1', sn1)], df1)
-                _style_excel_sheet(writer.sheets[_tab('2', sn2)], df2)
-            os.startfile(tmp.name)
-        except Exception as exc:
-            QMessageBox.warning(self, 'Export error', str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -826,10 +684,6 @@ def _build_info_card(aircraft: str, hrs: float,
                           [('S', 0), ('F', 110), ('F', 90)], card.window())
         dlg.exec()
 
-    def open_ecu():
-        dlg = _EcuDialog(aircraft, df_cyc, df_cfg, sys_vars, card.window())
-        dlg.exec()
-
     def open_pdf():
         import traceback
         try:
@@ -866,7 +720,6 @@ def _build_info_card(aircraft: str, hrs: float,
     for label, fn in [
         ('Role Equip.', open_sn),
         ('Item Hours', open_hrs),
-        ('ECU',        open_ecu),
     ]:
         btn = QPushButton(label)
         btn.setStyleSheet(_BTN_QSS)

@@ -9,6 +9,7 @@ Tabel-namen komen overeen met de oorspronkelijke Excel-bestandsnamen:
   statusbord, configuratie, mis, 3ms
 """
 import logging
+import shutil
 import sqlite3
 import sys
 from pathlib import Path
@@ -99,8 +100,6 @@ def import_excel_to_table(path: Path, table_name: str, **read_kwargs) -> tuple[i
 
 def load_table(table_name: str) -> pd.DataFrame | None:
     """Laad een volledige SQLite-tabel als DataFrame. Geeft None bij fout."""
-    if not table_exists(table_name):
-        return None
     conn = get_connection()
     try:
         df = pd.read_sql(f'SELECT * FROM "{table_name}"', conn)

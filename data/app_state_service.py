@@ -70,3 +70,6 @@ class AppStateService:
 
     def last_meta(self) -> float:
         return processor.last_meta()
+
+    def last_user_vars_mtime(self) -> float:
+        return processor.last_user_vars_mtime()

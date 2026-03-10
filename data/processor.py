@@ -34,27 +34,21 @@ _WORK_MODE_ALIASES = {
 
 def _settings_dir() -> Path:
     if getattr(sys, 'frozen', False):
-        # Frozen runtime-data lokaal op client bewaren voor snelle startup.
-        local = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local')))
-        target = local / 'MV3' / 'settings'
+        # Gedeelde map naast de exe — zelfde locatie voor alle gebruikers.
+        target = Path(sys.executable).parent / 'settings'
         target.mkdir(parents=True, exist_ok=True)
 
-        # Eenmalige seeding: legacy naast .exe → daarna bundled in _MEIPASS
-        seed_dirs = [
-            Path(sys.executable).parent / 'settings',
-            Path(getattr(sys, '_MEIPASS', '')) / 'settings',
-        ]
+        # Eenmalige seeding vanuit bundled defaults (_MEIPASS)
+        seed = Path(getattr(sys, '_MEIPASS', '')) / 'settings'
         for name in ('MV_UserVariabelen.json', 'MV_SystemVariabelen.json'):
             dst = target / name
             if not dst.exists():
-                for sdir in seed_dirs:
-                    src = sdir / name
-                    if src.exists():
-                        try:
-                            shutil.copy2(src, dst)
-                        except OSError:
-                            pass
-                        break
+                src = seed / name
+                if src.exists():
+                    try:
+                        shutil.copy2(src, dst)
+                    except OSError:
+                        pass
         return target
     return Path(__file__).parent.parent / 'settings'
 
@@ -424,6 +418,14 @@ def last_meta() -> float:
     """Retourneer de modificatietijd van de flag, of 0 als niet aanwezig."""
     try:
         return _get_meta_path().stat().st_mtime
+    except FileNotFoundError:
+        return 0.0
+
+
+def last_user_vars_mtime() -> float:
+    """Retourneer de modificatietijd van MV_UserVariabelen.json, of 0 als niet aanwezig."""
+    try:
+        return (_settings_dir() / 'MV_UserVariabelen.json').stat().st_mtime
     except FileNotFoundError:
         return 0.0
 

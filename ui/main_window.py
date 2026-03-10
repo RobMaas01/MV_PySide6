@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QCursor, QIcon
 from PySide6.QtWidgets import (
     QCheckBox, QHBoxLayout,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from ui.tabs.home_tab import HomeTab
 from ui.tabs.overview_tab import OverviewTab
 from ui.tabs.planning_tab import PlanningTab
+from ui.tabs.ecu_tab import EcuTab
 from ui.tabs.settings_tab import SettingsTab
 from data.app_state_service import AppStateService
 from ui.theme import (
@@ -71,29 +72,30 @@ _TAB_QSS = f"""
 """
 
 
-def _track_login() -> tuple[str, int]:
-    """
-    Lees Windows-gebruikersnaam, verhoog de login-teller in MV_UserVariabelen.json
-    en geef (username, count) terug.
-    """
-    from data.processor import modify_user_variables
+class _LoginTracker(QThread):
+    """Verhoog de login-teller in achtergrond — blokkeert de hoofdthread niet."""
+    done = Signal(int)  # login count
 
-    username = os.environ.get('USERNAME') or os.environ.get('USER') or ''
-    result = [1]
+    def __init__(self, username: str):
+        super().__init__()
+        self._username = username
 
-    def _apply(data: dict) -> None:
-        logins = data.setdefault('logins', {})
-        entry = logins.setdefault(username, {'count': 0, 'last': ''})
-        entry['count'] += 1
-        entry['last'] = datetime.now().strftime('%d/%m/%Y %H:%M')
-        result[0] = entry['count']
+    def run(self) -> None:
+        from data.processor import modify_user_variables
+        result = [1]
 
-    try:
-        modify_user_variables(_apply)
-    except Exception:
-        pass
+        def _apply(data: dict) -> None:
+            logins = data.setdefault('logins', {})
+            entry = logins.setdefault(self._username, {'count': 0, 'last': ''})
+            entry['count'] += 1
+            entry['last'] = datetime.now().strftime('%d/%m/%Y %H:%M')
+            result[0] = entry['count']
 
-    return username, result[0]
+        try:
+            modify_user_variables(_apply)
+        except Exception:
+            pass
+        self.done.emit(result[0])
 
 
 class MainWindow(QMainWindow):
@@ -111,6 +113,7 @@ class MainWindow(QMainWindow):
         self._statusbord_fp: str    = ''     # sha1 van statusbord; opnieuw berekend na import
         # timer to poll for external changes (last_change.txt) + visible check counter
         self._last_flag = 0.0
+        self._last_user_vars_mtime = 0.0
         self._check_interval_sec = 2
         self._update_check_count = 1
         self._username = ''
@@ -134,8 +137,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1000, 600)
         self.setStyleSheet(APP_QSS)
         self.setWindowIcon(QIcon(str(Path(__file__).parent.parent / 'assets' / 'NH90_taskbar.ico')))
-        username, login_count = _track_login()
-        self._username = username
+        self._username = os.environ.get('USERNAME') or os.environ.get('USER') or ''
 
         self._tabs = QTabWidget()
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
@@ -168,8 +170,7 @@ class MainWindow(QMainWindow):
         self._tabs.setCornerWidget(_corner, Qt.Corner.TopRightCorner)
         _corner.setVisible(False)
 
-        # Pagina 0: Home
-        self._work_mode = self._load_work_mode()
+        # Pagina 0: Home — work_mode wordt bijgewerkt in on_data_loaded()
         self._home_tab = HomeTab(
             username=self._username,
             work_mode=self._work_mode,
@@ -177,7 +178,7 @@ class MainWindow(QMainWindow):
         )
         self._home_tab.tab_switch_requested.connect(self._tabs.setCurrentIndex)
         self._home_tab.work_mode_changed.connect(self._on_work_mode_changed)
-        self._home_tab.settings_saved.connect(self._refresh_overview)
+        self._home_tab.settings_saved.connect(self._on_own_settings_saved)
         self._home_tab.import_completed.connect(self._reload_data)
         self._tabs.addTab(self._home_tab, 'Home')
 
@@ -188,6 +189,10 @@ class MainWindow(QMainWindow):
         # Pagina 2: Planning
         self._planning_tab = PlanningTab()
         self._tabs.addTab(self._planning_tab, 'Planning')
+
+        # Pagina 3: ECU
+        self._ecu_tab = EcuTab()
+        self._tabs.addTab(self._ecu_tab, 'ECU')
 
         # Overige pagina's: placeholder
         for label, key in _NAV_ITEMS[3:-1]:
@@ -214,20 +219,21 @@ class MainWindow(QMainWindow):
         """)
         self.setStatusBar(self._status_bar)
 
-        _user_lbl = QLabel(f'  Welcome, {username}   |   Logins: {login_count}  ')
-        _user_lbl.setStyleSheet(f'color: {SLATE_400}; font-size: 11px; background: transparent;')
-        self._status_bar.addPermanentWidget(_user_lbl)
+        self._user_lbl = QLabel(f'  Welcome, {self._username}  ')
+        self._user_lbl.setStyleSheet(f'color: {SLATE_400}; font-size: 11px; background: transparent;')
+        self._status_bar.addPermanentWidget(self._user_lbl)
+
+        # Login-teller ophalen in achtergrond (blokkeert startup niet)
+        self._login_tracker = _LoginTracker(self._username)
+        self._login_tracker.done.connect(
+            lambda n: self._user_lbl.setText(f'  Welcome, {self._username}   |   Logins: {n}  ')
+        )
+        self._login_tracker.start()
 
         self._update_lbl = QLabel('')
         self._update_lbl.setStyleSheet(f'color: {SLATE_400}; font-size: 11px; background: transparent;')
         self._status_bar.addPermanentWidget(self._update_lbl)
         self._render_update_counter()
-
-    def _load_work_mode(self) -> str:
-        try:
-            return self._state.get_work_mode(username=self._username)
-        except Exception:
-            return 'Flight MVKK'
 
     def _on_work_mode_changed(self, mode: str) -> None:
         mode = str(mode)
@@ -250,6 +256,7 @@ class MainWindow(QMainWindow):
         # stel de vlag in op huidige waarde, zodat we niet reloaden bij start
         try:
             self._last_flag = self._state.last_meta()
+            self._last_user_vars_mtime = self._state.last_user_vars_mtime()
         except Exception:
             pass
 
@@ -271,8 +278,12 @@ class MainWindow(QMainWindow):
                 get_aircraft_list, get_calendar_inspections, get_cycle_inspections,
             )
             from ui.tabs.overview_tab import _statusbord_fingerprint
+            from data.processor import get_work_mode
             sys_vars  = self._state.load_system_variables()
             user_vars = self._state.load_user_variables()
+
+            # Work_mode ophalen uit geladen user_vars (geen extra bestandslees)
+            self._work_mode = get_work_mode(user_vars, username=self._username)
 
             # Bouw centrale cache op â€” Ã©Ã©nmalige berekening voor alle tabs.
             if store.statusbord is not None:
@@ -304,6 +315,8 @@ class MainWindow(QMainWindow):
             )
             if self._df_cal is not None:
                 self._planning_tab.load_data(self._ac_list, self._df_cal, self._df_cyc, sys_vars)
+            if self._df_cyc is not None:
+                self._ecu_tab.load_data(self._ac_list, self._df_cyc, self._df_cfg, sys_vars)
         except Exception as exc:
             self._status_bar.showMessage(f'  Load error: {exc}')
 
@@ -367,6 +380,8 @@ class MainWindow(QMainWindow):
             )
             if refresh_planning and self._df_cal is not None:
                 self._planning_tab.load_data(self._ac_list, self._df_cal, self._df_cyc, self._sys_vars)
+            if refresh_planning and self._df_cyc is not None:
+                self._ecu_tab.load_data(self._ac_list, self._df_cyc, self._df_cfg, self._sys_vars)
         except Exception as exc:
             self._status_bar.showMessage(f'  Refresh error: {exc}')
 
@@ -391,12 +406,25 @@ class MainWindow(QMainWindow):
     def _render_update_counter(self) -> None:
         self._update_lbl.setText(f'  Update check #{self._update_check_count}  ')
 
+    def _on_own_settings_saved(self) -> None:
+        """Markeer eigen opslag zodat de poller niet een seconde later dubbel ververst."""
+        try:
+            self._last_user_vars_mtime = self._state.last_user_vars_mtime()
+        except Exception:
+            pass
+        self._refresh_overview()
+
     def _check_for_updates(self):
         try:
             m = self._state.last_meta()
             if m != self._last_flag:
                 self._last_flag = m
                 self._request_meta_refresh()
+
+            uv = self._state.last_user_vars_mtime()
+            if uv != self._last_user_vars_mtime:
+                self._last_user_vars_mtime = uv
+                self._refresh_overview()
         except Exception:
             logging.warning('_check_for_updates mislukt', exc_info=True)
         finally:
