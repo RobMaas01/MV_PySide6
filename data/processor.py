@@ -33,13 +33,12 @@ _WORK_MODE_ALIASES = {
 # ---------------------------------------------------------------------------
 
 def _settings_dir() -> Path:
-    if getattr(sys, 'frozen', False):
-        # Gedeelde map naast de exe — zelfde locatie voor alle gebruikers.
-        target = Path(sys.executable).parent / 'settings'
-        target.mkdir(parents=True, exist_ok=True)
+    from data.app_config import get_settings_dir, get_internal_dir
+    target = get_settings_dir()
 
-        # Eenmalige seeding vanuit bundled defaults (_MEIPASS)
-        seed = Path(getattr(sys, '_MEIPASS', '')) / 'settings'
+    if getattr(sys, 'frozen', False):
+        # Eenmalige seeding vanuit bundled defaults (_internal)
+        seed = get_internal_dir() / 'settings'
         for name in ('MV_UserVariabelen.json', 'MV_SystemVariabelen.json'):
             dst = target / name
             if not dst.exists():
@@ -49,8 +48,7 @@ def _settings_dir() -> Path:
                         shutil.copy2(src, dst)
                     except OSError:
                         pass
-        return target
-    return Path(__file__).parent.parent / 'settings'
+    return target
 
 
 @contextmanager
@@ -85,11 +83,22 @@ def _user_vars_lock():
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
-    """Schrijft `data` atomisch naar `path` via een tijdelijk bestand."""
+    """Schrijft `data` atomisch naar `path` via een tijdelijk bestand.
+
+    Op Windows kan os.replace() mislukken als een ander proces het doelbestand
+    op dat moment open heeft. We proberen maximaal 10x met 20 ms tussenpauze.
+    """
     tmp = path.with_suffix('.tmp')
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    for attempt in range(10):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(0.02)
 
 
 def modify_user_variables(fn) -> None:

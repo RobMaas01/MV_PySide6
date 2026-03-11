@@ -33,16 +33,10 @@ log = logging.getLogger(__name__)
 
 def db_path() -> Path:
     """
-    Dev:    <projectroot>/datasource/mv_data.db
-    Frozen: <exe_dir>/datasource/mv_data.db  (gedeelde map, zelfde voor alle gebruikers)
+    Pad naar mv_data.db — in de datasource-map uit mv_config.ini.
     """
-    if getattr(sys, 'frozen', False):
-        root = Path(sys.executable).parent
-    else:
-        root = Path(__file__).parent.parent
-    p = root / 'datasource'
-    p.mkdir(parents=True, exist_ok=True)
-    return p / 'mv_data.db'
+    from data.app_config import get_datasource_dir
+    return get_datasource_dir() / 'mv_data.db'
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +96,10 @@ def load_table(table_name: str) -> pd.DataFrame | None:
     """Laad een volledige SQLite-tabel als DataFrame. Geeft None bij fout."""
     conn = get_connection()
     try:
-        df = pd.read_sql(f'SELECT * FROM "{table_name}"', conn)
+        cur = conn.execute(f'SELECT * FROM "{table_name}"')
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+        df = pd.DataFrame(rows, columns=cols)
         log.info('Geladen uit SQLite: %s (%d rijen)', table_name, len(df))
         return df
     except Exception as exc:

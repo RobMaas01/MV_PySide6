@@ -17,18 +17,10 @@ import pandas as pd
 log = logging.getLogger(__name__)
 
 
-def _base_dir() -> Path:
-    """Projectroot in dev-modus; _internal/ map in frozen exe."""
-    if getattr(sys, 'frozen', False):
-        return Path(sys._MEIPASS)
-    return Path(__file__).parent.parent   # MV_PySide6/
-
-
 def _data_folder() -> Path:
     """Map met xlsx-bestanden voor eenmalige auto-migratie naar SQLite."""
-    if getattr(sys, 'frozen', False):
-        return Path(sys.executable).parent / 'datasource'
-    return _base_dir() / 'datasource'
+    from data.app_config import get_datasource_dir
+    return get_datasource_dir()
 
 
 # ---------------------------------------------------------------------------
